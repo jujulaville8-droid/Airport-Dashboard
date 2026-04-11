@@ -21,12 +21,21 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
 
 const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
+// Scopes required by the app:
+//   - gmail.send    → src/lib/email.ts (schedule notifications, etc.)
+//   - gmail.modify  → src/lib/gmail-inbox.ts — needs to read messages AND
+//     create/apply labels (TailorsDaughter/Imported | Failed) for the cron
+//     scanner. gmail.modify is a superset of gmail.readonly and is the
+//     smallest scope that grants label creation.
+//
+// Adding a new scope to an existing refresh token is not possible — you
+// must re-run this script and replace the token in Vercel entirely.
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: 'offline',
   prompt: 'consent',
   scope: [
     'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
   ],
 });
 
