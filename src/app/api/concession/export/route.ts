@@ -27,6 +27,14 @@ const EC_RATE = 2.7;           // USD → ECD
 const CC_COMMISSION = 0.04;    // 4% credit card commission
 const RENT_PERCENT = 0.10;     // 10% of net sales
 
+// MAG (Minimum Annual Guarantee) — the base rent the airport charges
+// regardless of sales. The template ships with an "exclusive of ABST" figure;
+// we gross it up by the 13% ABST (Antigua & Barbuda Sales Tax) so the C19
+// "Concession Payable" line already reflects what actually has to be remitted.
+const MAG_EXCL_ABST = 4198;
+const ABST_RATE = 0.13;
+const MAG_INCL_ABST = MAG_EXCL_ABST * (1 + ABST_RATE); // 4743.74
+
 /**
  * Convert a YYYY-MM-DD string to an Excel date serial number.
  * Excel counts days from 1899-12-30 (accounting for its 1900 leap year bug
@@ -128,7 +136,8 @@ export async function GET(request: NextRequest) {
 
     // --- Precompute cached values for formula cells ---
     // Formulas themselves (sheet['C8'].f etc.) are preserved from the template
-    // via the { ...existing, v } spread.
+    // via the { ...existing, v } spread — except C18 and C19 where we override
+    // the template's hardcoded MAG and payable logic (see below).
     const c8 = grossSalesUSD * EC_RATE;
     const c10 = actualCCSalesUSD * EC_RATE;
     const c11 = -(c10 * CC_COMMISSION);
@@ -136,8 +145,20 @@ export async function GET(request: NextRequest) {
     const c13 = actualCashSalesUSD * EC_RATE;
     const c15 = c12 + c13;
     const c17 = c15 * RENT_PERCENT;
-    const c18 = Number(sheet['C18']?.v ?? -4198);  // MAG, literal in template
-    const c19 = c17 + c18;
+
+    // C18 = MAG inclusive of 13% ABST, shown as a negative credit against
+    // percentage rent (matching the template's sign convention). We rewrite
+    // this at runtime because the shipped template stores MAG-exclusive of
+    // ABST and the airport authority wants the tax-inclusive figure.
+    const c18 = -MAG_INCL_ABST;
+
+    // C19 "Concession Payable" = MAX(0, C17 + C18).
+    // Percentage rent floors the payable — in low-sales months where rent
+    // doesn't exceed MAG, the payable is $0 (MAG is already prepaid), never
+    // a negative "refund". We also overwrite the template's C17+C18 formula
+    // with a MAX() formula so a user recalculating in Excel gets the same
+    // answer our cached value shows.
+    const c19 = Math.max(0, c17 + c18);
     const g12 = c8 - c10 - c13;
 
     sheet['C8'] = { ...sheet['C8'], v: round2(c8) };
@@ -147,7 +168,16 @@ export async function GET(request: NextRequest) {
     sheet['C13'] = { ...sheet['C13'], v: round2(c13) };
     sheet['C15'] = { ...sheet['C15'], v: round2(c15) };
     sheet['C17'] = { ...sheet['C17'], v: round2(c17) };
-    sheet['C19'] = { ...sheet['C19'], v: round2(c19) };
+
+    // C18: relabel column A and write the tax-inclusive MAG as a literal
+    // negative so Excel/LibreOffice display it correctly without a formula.
+    sheet['A18'] = { ...sheet['A18'], t: 's', v: 'Less: MAG (Inclusive of 13% ABST)' };
+    sheet['C18'] = { t: 'n', v: round2(c18) };
+
+    // C19: replace the template's `C17+C18` formula with MAX(0, C17+C18)
+    // so the file audits correctly if opened and recalculated.
+    sheet['C19'] = { t: 'n', f: 'MAX(0, C17+C18)', v: round2(c19) };
+
     sheet['G12'] = { ...sheet['G12'], v: round2(g12) };
 
     // Tell Excel / LibreOffice to force a full recalc when the file opens.
