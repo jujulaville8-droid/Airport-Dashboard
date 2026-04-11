@@ -1,10 +1,42 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+/**
+ * Service-role Supabase client for server-side operations (bypasses RLS).
+ *
+ * Lazily instantiated on first property access so that importing this module
+ * is safe even when env vars aren't yet available — e.g., during Vercel's
+ * build step before env vars are injected, or during a fresh `next build`
+ * without an `.env.local`. The top-level `createClient()` call would
+ * otherwise throw "supabaseUrl is required" and fail the build.
+ *
+ * Every route handler that reads `supabase.from(...)` runs at request time
+ * on the Node server, where env vars ARE present, so this proxy is
+ * transparent to consumers.
+ */
+let _client: SupabaseClient | null = null;
 
-// Service role client for server-side operations (bypasses RLS)
-export const supabase = createClient(supabaseUrl, supabaseServiceKey);
+function getClient(): SupabaseClient {
+  if (_client) return _client;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error(
+      'Supabase env vars missing at runtime. Expected NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
+    );
+  }
+  _client = createClient(supabaseUrl, supabaseServiceKey);
+  return _client;
+}
+
+// Proxy forwards every property access to the lazily-constructed client.
+// Consumers keep using `supabase.from('...')` exactly as before.
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    const client = getClient();
+    const value = Reflect.get(client, prop, receiver);
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
 
 // --- Sales ---
 
