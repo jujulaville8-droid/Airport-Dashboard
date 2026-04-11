@@ -10,6 +10,9 @@ import {
   WarningCircle,
   Trash,
   CalendarBlank,
+  FilePdf,
+  X,
+  DownloadSimple,
 } from '@phosphor-icons/react';
 import { formatTime12 } from '@/lib/date-utils';
 
@@ -17,6 +20,7 @@ interface UploadedMonth {
   month: string;
   totalFlights: number;
   departures: number;
+  hasPDF?: boolean;
 }
 
 interface DayAnalytics {
@@ -67,6 +71,53 @@ export default function FlightsPage() {
   const [viewMonth, setViewMonth] = useState(selectedMonth);
 
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // PDF preview modal state. When `pdfViewer.month` is non-null the modal
+  // is open; `signedUrl` is populated after the API call returns. Keeping
+  // them in a single object keeps opens/closes atomic.
+  const [pdfViewer, setPdfViewer] = useState<{
+    month: string;
+    signedUrl: string | null;
+    fileName: string | null;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+
+  const openPdfViewer = useCallback(async (month: string) => {
+    setPdfViewer({ month, signedUrl: null, fileName: null, loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flights/file?month=${month}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setPdfViewer({
+          month,
+          signedUrl: null,
+          fileName: null,
+          loading: false,
+          error: body.error || 'Failed to load PDF',
+        });
+        return;
+      }
+      const data = await res.json();
+      setPdfViewer({
+        month,
+        signedUrl: data.signedUrl,
+        fileName: data.fileName,
+        loading: false,
+        error: null,
+      });
+    } catch {
+      setPdfViewer({
+        month,
+        signedUrl: null,
+        fileName: null,
+        loading: false,
+        error: 'Network error fetching PDF',
+      });
+    }
+  }, []);
+
+  const closePdfViewer = useCallback(() => setPdfViewer(null), []);
 
   const fetchUploadedMonths = useCallback(async () => {
     try {
@@ -247,14 +298,27 @@ export default function FlightsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {uploadedMonths.map(m => (
                 <div key={m.month} className="bg-white rounded-[16px] border border-brand-wood/15 p-5 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)] flex items-center justify-between">
-                  <div>
+                  <div className="min-w-0">
                     <h4 className="font-serif text-lg text-brand-black">{formatMonth(m.month)}</h4>
                     <p className="text-xs text-brand-wood/60 mt-1">{m.totalFlights} flights &middot; {m.departures} departures</p>
+                    {!m.hasPDF && (
+                      <p className="text-[10px] text-brand-wood/40 mt-1 italic">No source PDF on record — re-upload to view</p>
+                    )}
                   </div>
-                  <button onClick={() => handleDeleteMonth(m.month)} disabled={deleting === m.month}
-                    className="p-2 rounded-lg hover:bg-red-50 text-brand-wood/40 hover:text-red-500 transition-colors cursor-pointer disabled:opacity-50">
-                    {deleting === m.month ? <CircleNotch size={18} className="animate-spin" /> : <Trash size={18} />}
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => openPdfViewer(m.month)}
+                      disabled={!m.hasPDF}
+                      title={m.hasPDF ? 'View source PDF' : 'No PDF stored for this month'}
+                      className="p-2 rounded-lg hover:bg-brand-gold/10 text-brand-wood/60 hover:text-brand-gold transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <FilePdf size={18} />
+                    </button>
+                    <button onClick={() => handleDeleteMonth(m.month)} disabled={deleting === m.month}
+                      className="p-2 rounded-lg hover:bg-red-50 text-brand-wood/40 hover:text-red-500 transition-colors cursor-pointer disabled:opacity-50">
+                      {deleting === m.month ? <CircleNotch size={18} className="animate-spin" /> : <Trash size={18} />}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -434,6 +498,77 @@ export default function FlightsPage() {
           </div>
         )}
       </div>
+
+      {/* PDF preview modal — rendered outside the main content div so it
+          overlays everything. Click-outside and ESC close it. Inline preview
+          uses an <embed> tag pointed at the Supabase-signed URL. */}
+      {pdfViewer && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-brand-black/60 backdrop-blur-sm p-4 sm:p-8"
+          onClick={closePdfViewer}
+          onKeyDown={(e) => { if (e.key === 'Escape') closePdfViewer(); }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-[20px] shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-brand-wood/10 bg-brand-cream/40">
+              <div className="flex items-center gap-3 min-w-0">
+                <FilePdf size={22} className="text-brand-gold shrink-0" />
+                <div className="min-w-0">
+                  <h4 className="font-serif text-lg text-brand-black truncate">
+                    Flight Schedule — {formatMonth(pdfViewer.month)}
+                  </h4>
+                  {pdfViewer.fileName && (
+                    <p className="text-[11px] text-brand-wood/60 truncate">{pdfViewer.fileName}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {pdfViewer.signedUrl && (
+                  <a
+                    href={pdfViewer.signedUrl}
+                    download={pdfViewer.fileName ?? `flight-schedule-${pdfViewer.month}.pdf`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-gold text-white rounded-lg text-xs font-semibold hover:bg-brand-gold/90 transition-colors"
+                  >
+                    <DownloadSimple size={14} weight="bold" /> Download
+                  </a>
+                )}
+                <button
+                  onClick={closePdfViewer}
+                  aria-label="Close"
+                  className="p-2 rounded-lg hover:bg-brand-wood/10 text-brand-wood/60 transition-colors cursor-pointer"
+                >
+                  <X size={18} weight="bold" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-brand-wood/5 min-h-[400px] relative">
+              {pdfViewer.loading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-brand-wood/60">
+                  <CircleNotch size={28} className="animate-spin" />
+                  <p className="text-sm">Loading PDF…</p>
+                </div>
+              )}
+              {pdfViewer.error && !pdfViewer.loading && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-red-600 p-8 text-center">
+                  <WarningCircle size={28} />
+                  <p className="text-sm">{pdfViewer.error}</p>
+                </div>
+              )}
+              {pdfViewer.signedUrl && (
+                <embed
+                  src={pdfViewer.signedUrl}
+                  type="application/pdf"
+                  className="w-full h-full min-h-[70vh]"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

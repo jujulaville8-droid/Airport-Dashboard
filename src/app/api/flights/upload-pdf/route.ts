@@ -1,5 +1,5 @@
 import { importFlightSchedule } from '@/lib/flight-schedule';
-import { deleteFlightMonth, getUploadedMonths } from '@/lib/db';
+import { deleteFlightMonth, deleteFlightSchedulePDF, getUploadedMonths } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -63,6 +63,13 @@ export async function DELETE(request: NextRequest) {
     }
 
     await deleteFlightMonth(scheduleMonth);
+    // Best-effort cleanup of the stored source PDF. Failure here is logged
+    // but doesn't fail the request — the flight rows are already gone.
+    try {
+      await deleteFlightSchedulePDF(scheduleMonth);
+    } catch (pdfErr) {
+      console.error('[api/flights/upload-pdf DELETE] PDF cleanup failed:', pdfErr);
+    }
     return Response.json({ success: true, deleted: scheduleMonth });
   } catch (error) {
     console.error('[api/flights/upload-pdf DELETE] error:', error);

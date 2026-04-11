@@ -157,11 +157,120 @@ export async function getUploadedMonths() {
     if (monthCounts[m]) monthCounts[m].departures++;
   }
 
+  // Check which months have a stored source PDF. Older months imported
+  // before PDF persistence was added won't have a file on record and
+  // their "View PDF" button will be disabled.
+  const { data: fileRows, error: fileErr } = await supabase
+    .from('flight_schedule_files')
+    .select('schedule_month');
+  if (fileErr) throw fileErr;
+  const monthsWithPdf = new Set<string>(
+    (fileRows ?? []).map((r) => r.schedule_month as string)
+  );
+
   return Object.entries(monthCounts).map(([month, counts]) => ({
     month,
     totalFlights: counts.total,
     departures: counts.departures,
+    hasPDF: monthsWithPdf.has(month),
   }));
+}
+
+// --- Flight schedule file storage ---
+//
+// The PDFs uploaded to /api/flights/upload-pdf are persisted to a private
+// Supabase Storage bucket (`flight-schedules`) so the flights page can
+// display them inline on demand. Metadata (path, size, uploaded_at) is
+// tracked in the `flight_schedule_files` table for fast lookup.
+//
+// Bucket setup: see supabase/migrations/002_flight_schedule_files.sql
+
+const FLIGHT_PDF_BUCKET = 'flight-schedules';
+
+export async function storeFlightSchedulePDF(
+  scheduleMonth: string,
+  buffer: Buffer,
+  fileName: string
+): Promise<void> {
+  const storagePath = `${scheduleMonth}.pdf`;
+
+  // Upload with upsert so re-uploading the same month replaces the prior file
+  const { error: uploadErr } = await supabase.storage
+    .from(FLIGHT_PDF_BUCKET)
+    .upload(storagePath, buffer, {
+      contentType: 'application/pdf',
+      upsert: true,
+    });
+  if (uploadErr) throw new Error(`Flight PDF upload failed: ${uploadErr.message}`);
+
+  // Upsert metadata row
+  const { error: metaErr } = await supabase
+    .from('flight_schedule_files')
+    .upsert(
+      {
+        schedule_month: scheduleMonth,
+        storage_path: storagePath,
+        file_name: fileName,
+        file_size: buffer.byteLength,
+        uploaded_at: new Date().toISOString(),
+      },
+      { onConflict: 'schedule_month' }
+    );
+  if (metaErr) throw new Error(`Flight PDF metadata write failed: ${metaErr.message}`);
+}
+
+export async function getFlightSchedulePDFMeta(scheduleMonth: string): Promise<{
+  storagePath: string;
+  fileName: string;
+  fileSize: number;
+  uploadedAt: string;
+} | null> {
+  const { data, error } = await supabase
+    .from('flight_schedule_files')
+    .select('storage_path, file_name, file_size, uploaded_at')
+    .eq('schedule_month', scheduleMonth)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    storagePath: data.storage_path as string,
+    fileName: data.file_name as string,
+    fileSize: data.file_size as number,
+    uploadedAt: data.uploaded_at as string,
+  };
+}
+
+/**
+ * Get a short-lived signed URL for a stored flight schedule PDF.
+ * Returns null if no file is on record for the month.
+ *
+ * The URL is single-use by Supabase convention and expires after the
+ * specified number of seconds (default: 5 minutes — long enough to open
+ * in an embed, not long enough to share).
+ */
+export async function getFlightSchedulePDFSignedUrl(
+  scheduleMonth: string,
+  expiresInSeconds = 300
+): Promise<string | null> {
+  const meta = await getFlightSchedulePDFMeta(scheduleMonth);
+  if (!meta) return null;
+  const { data, error } = await supabase.storage
+    .from(FLIGHT_PDF_BUCKET)
+    .createSignedUrl(meta.storagePath, expiresInSeconds);
+  if (error) throw new Error(`Signed URL creation failed: ${error.message}`);
+  return data?.signedUrl ?? null;
+}
+
+/**
+ * Delete the stored PDF and metadata for a schedule month. Called by the
+ * flights DELETE route when a user removes a month's flight data.
+ * Silently succeeds if no file is on record.
+ */
+export async function deleteFlightSchedulePDF(scheduleMonth: string): Promise<void> {
+  const meta = await getFlightSchedulePDFMeta(scheduleMonth);
+  if (!meta) return;
+  await supabase.storage.from(FLIGHT_PDF_BUCKET).remove([meta.storagePath]);
+  await supabase.from('flight_schedule_files').delete().eq('schedule_month', scheduleMonth);
 }
 
 export async function deleteFlightMonth(scheduleMonth: string) {

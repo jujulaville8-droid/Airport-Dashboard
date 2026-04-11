@@ -255,7 +255,7 @@ export async function importFlightSchedule(
     }));
 
     // Clear any existing data for this month first, then insert fresh
-    const { deleteFlightMonth } = await import('./db');
+    const { deleteFlightMonth, storeFlightSchedulePDF } = await import('./db');
     await deleteFlightMonth(scheduleMonth);
 
     // Insert in batches using plain insert (not upsert — we cleared first)
@@ -264,6 +264,19 @@ export async function importFlightSchedule(
       const batch = flightRecords.slice(i, i + 200);
       const { error } = await supabase.from('flight_data').insert(batch);
       if (error) throw new Error(`Batch insert failed at row ${i}: ${error.message}`);
+    }
+
+    // Persist the original PDF to Supabase Storage so the flights page can
+    // pull it back up on demand. Non-fatal on failure — the flight rows are
+    // already in place and the user's more interested in those than in the
+    // source file. We surface any storage error as a warning in `errors` so
+    // it shows up in import_logs without failing the whole import.
+    try {
+      await storeFlightSchedulePDF(scheduleMonth, pdfBuffer, fileName);
+    } catch (storageErr) {
+      const msg = storageErr instanceof Error ? storageErr.message : String(storageErr);
+      errors.push(`Warning: PDF storage failed (flight rows still imported): ${msg}`);
+      console.error('[flight-schedule] PDF storage failed:', msg);
     }
 
     const arrivals = flights.filter((f) => f.flight_type === 'arrival').length;
