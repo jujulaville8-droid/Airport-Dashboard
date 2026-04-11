@@ -30,8 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — NEVER commit .env.local or any file with real secrets.
+# .env.example is intentionally whitelisted so newcomers know what to set.
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +41,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local-only tooling output (screenshots, playwright logs, scratch previews)
+/.playwright-mcp/
+/design-previews/
+direction-a-*.png
+direction-a-*.jpg
+
+# local-only: Claude Code skills cache, agent scratch
+/.agents/
+/.claude/
+skills-lock.json

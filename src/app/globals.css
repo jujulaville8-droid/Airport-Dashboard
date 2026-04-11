@@ -1,26 +1,115 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * ============================================================================
+ * Direction A — "Financial Terminal"
+ * ============================================================================
+ *
+ * Goal: Stop looking like a boutique/lookbook, start looking like a business
+ * tool. Stripe / Linear / Bloomberg-style.
+ *
+ * Key moves:
+ *  - Drop Playfair Display entirely. Inter handles everything, with weight
+ *    doing the work that a display serif used to. `--font-serif` is aliased
+ *    to Inter so existing `className="font-serif"` usages keep working —
+ *    they're now just "this is a heading in weight 600" instead of a font swap.
+ *  - Tabular numerals globally, so dollar amounts align and stop jittering.
+ *  - Palette shifts from cream/gold/wood to paper-white/graphite with a
+ *    single restrained accent. The existing brand-* tokens are preserved so
+ *    all the existing utility classes (bg-brand-cream, text-brand-wood/60,
+ *    border-brand-gold, etc.) continue to resolve — they just map to new
+ *    values now.
+ *  - Tighter tracking, subtler shadows.
+ * ============================================================================
+ */
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Surfaces — paper-white, slightly cooler than cream */
+  --color-brand-cream: #F7F7F5;   /* page background, was #FAF8F5 */
+  --color-brand-linen: #FFFFFF;   /* sidebar / card surface, was #F5F0EB */
+
+  /* Ink — graphite, not pure black */
+  --color-brand-black: #0F172A;   /* primary text, was #1A1A1A */
+  --color-brand-wood:  #475569;   /* secondary text / muted UI, was #8B7355 */
+
+  /* Accent — single restrained color, reserved for "this matters" */
+  /* Indigo-600. Not gold, not pastel. Reads as "software", not "hospitality". */
+  --color-brand-gold:  #4F46E5;
+
+  /* Teal kept for badges that distinguish a second category (arrivals vs departures) */
+  --color-brand-teal:  #0891B2;
+
+  /* Fonts */
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-inter);  /* aliased — `font-serif` now = Inter 600 */
+  --font-mono: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Tabular numerals everywhere by default. Prevents dollar-amount jitter and
+ * makes numeric columns in tables line up without extra work. This is the
+ * single biggest "feels like software not a brochure" move. */
+html {
+  font-feature-settings: "ss01", "cv11", "tnum", "calt";
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background-color: var(--color-brand-gold);
+  color: #fff;
+}
+
+/* Scrollbar — thinner, neutral */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-brand-cream);
+  color: var(--color-brand-black);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.005em;
+}
+
+/* `font-serif` is now Inter at weight 600 with tighter tracking — so all the
+ * existing `className="font-serif text-[32px]"` usages shift from decorative
+ * Playfair to confident sans-serif display weight. */
+.font-serif {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif !important;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Data numerals: larger numbers in cards/metrics should use heavier tabular
+ * tracking to feel authoritative. This targets the big display numbers like
+ * "$12,345" in cards. */
+.font-serif[class*="text-["] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+/*
+ * Sections start opacity-0 for anime.js entrance animations.
+ * Fallback reveals them after a beat even if JS hasn't fired.
+ */
+.anime-section,
+.anime-result {
+  animation: fadeInFallback 0.4s ease-out 1.2s forwards;
+}
+
+@keyframes fadeInFallback {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
