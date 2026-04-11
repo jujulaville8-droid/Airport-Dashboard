@@ -1,13 +1,7 @@
 import { supabase } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
-// MAG is shipped ex-ABST at 4,198 ECD; we gross it up by the 13% ABST rate
-// so every surface of the dashboard reports the same tax-inclusive figure
-// the airport authority actually bills. Keep in sync with
-// src/app/api/concession/export/route.ts.
-const MAG_EXCL_ABST = 4198;
-const ABST_RATE = 0.13;
-const MAG_ECD = MAG_EXCL_ABST * (1 + ABST_RATE); // 4743.74
+const MAG_ECD = 4198;           // Monthly MAG in ECD (exclusive of ABST, as billed)
 const THRESHOLD_USD = 22248;    // Net sales threshold in USD
 const PERCENTAGE_RATE = 0.10;   // 10% of net sales
 const EC_RATE = 2.7;            // USD to ECD conversion

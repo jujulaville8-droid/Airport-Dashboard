@@ -162,12 +162,11 @@ export default function ConcessionPage() {
 
   const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // Gross USD at which 10% of net sales (in ECD) equals the tax-inclusive MAG.
-  // Derived: MAG_incl / (PERCENTAGE_RATE * EC_RATE) = 4743.74 / (0.10 * 2.7)
-  // ≈ 17,569. Above this line we owe additional rent on top of the already-
-  // prepaid MAG; below it we just pay MAG and nothing extra. Keep in sync
-  // with the MAG/ABST constants in src/app/api/concession/route.ts.
-  const threshold = 17569;
+  // Gross USD at which 10% of net sales (in ECD) equals MAG. Derived:
+  // MAG / (PERCENTAGE_RATE * EC_RATE) = 4198 / (0.10 * 2.7) ≈ 15,548.
+  // Above this line we owe additional rent on top of the already-prepaid
+  // MAG; below it we just pay MAG and nothing extra.
+  const threshold = 15548;
   const progressPct = data ? Math.min((data.grossSalesUSD / threshold) * 100, 100) : 0;
 
   return (
@@ -255,7 +254,7 @@ export default function ConcessionPage() {
                   <p className="text-sm text-brand-wood/60 mt-2">${fmt(data.concessionPayableUSD)} USD</p>
                   <p className="text-xs text-brand-wood/50 mt-1">
                     {data.exceedsThreshold
-                      ? `10% of net sales ($${fmt(data.rentPercentageECD)} ECD) − MAG ($${fmt(data.magECD)} ECD, incl. 13% ABST)`
+                      ? `10% of net sales ($${fmt(data.rentPercentageECD)} ECD) − MAG ($${fmt(data.magECD)} ECD)`
                       : `MAG ($${fmt(data.magECD)} ECD) exceeds 10% of net sales ($${fmt(data.rentPercentageECD)} ECD) — nothing owed on top of MAG this period`
                     }
                   </p>
@@ -355,7 +354,7 @@ export default function ConcessionPage() {
                       <td className="py-3 text-right text-brand-wood/60">${fmt(data.rentPercentageECD)} ECD</td>
                     </tr>
                     <tr className="border-b border-brand-wood/10">
-                      <td className="py-3 text-brand-wood/70">Less: MAG (incl. 13% ABST)</td>
+                      <td className="py-3 text-brand-wood/70">Less: MAG</td>
                       <td className="py-3 text-right"></td>
                       <td className="py-3 text-right text-brand-wood/60">−${fmt(data.magECD)} ECD</td>
                     </tr>

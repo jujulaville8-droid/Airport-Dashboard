@@ -26,14 +26,7 @@ import * as fs from 'fs';
 const EC_RATE = 2.7;           // USD → ECD
 const CC_COMMISSION = 0.04;    // 4% credit card commission
 const RENT_PERCENT = 0.10;     // 10% of net sales
-
-// MAG (Minimum Annual Guarantee) — the base rent the airport charges
-// regardless of sales. The template ships with an "exclusive of ABST" figure;
-// we gross it up by the 13% ABST (Antigua & Barbuda Sales Tax) so the C19
-// "Concession Payable" line already reflects what actually has to be remitted.
-const MAG_EXCL_ABST = 4198;
-const ABST_RATE = 0.13;
-const MAG_INCL_ABST = MAG_EXCL_ABST * (1 + ABST_RATE); // 4743.74
+const MAG_ECD = 4198;          // MAG exclusive of ABST, as billed by ABAA
 
 /**
  * Convert a YYYY-MM-DD string to an Excel date serial number.
@@ -146,11 +139,10 @@ export async function GET(request: NextRequest) {
     const c15 = c12 + c13;
     const c17 = c15 * RENT_PERCENT;
 
-    // C18 = MAG inclusive of 13% ABST, shown as a negative credit against
-    // percentage rent (matching the template's sign convention). We rewrite
-    // this at runtime because the shipped template stores MAG-exclusive of
-    // ABST and the airport authority wants the tax-inclusive figure.
-    const c18 = -MAG_INCL_ABST;
+    // C18 = MAG exclusive of ABST, as shipped in the template and billed
+    // by the airport. Shown as a negative credit against percentage rent
+    // (matching the template's sign convention).
+    const c18 = -MAG_ECD;
 
     // C19 "Concession Payable" = MAX(0, C17 + C18).
     // Percentage rent floors the payable — in low-sales months where rent
@@ -169,9 +161,8 @@ export async function GET(request: NextRequest) {
     sheet['C15'] = { ...sheet['C15'], v: round2(c15) };
     sheet['C17'] = { ...sheet['C17'], v: round2(c17) };
 
-    // C18: relabel column A and write the tax-inclusive MAG as a literal
-    // negative so Excel/LibreOffice display it correctly without a formula.
-    sheet['A18'] = { ...sheet['A18'], t: 's', v: 'Less: MAG (Inclusive of 13% ABST)' };
+    // C18: write the MAG as a literal negative. Template already labels
+    // this "Less: MAG (Exclusive of ABST)" — we leave that intact.
     sheet['C18'] = { t: 'n', v: round2(c18) };
 
     // C19: replace the template's `C17+C18` formula with MAX(0, C17+C18)
