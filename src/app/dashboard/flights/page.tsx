@@ -31,6 +31,9 @@ interface DayAnalytics {
   hvDepartures: number;
   totalPassengers: number;
   hvPassengers: number;
+  actualPassengers: number;
+  actualDeparturesWithCount: number;
+  actualCoverage: number;
   firstHVDeparture: string | null;
   lastHVDeparture: string | null;
   peakHour: string | null;
@@ -418,13 +421,22 @@ export default function FlightsPage() {
                 <div className="col-span-1 text-center">Deps</div>
                 <div className="col-span-1 text-center">100+</div>
                 <div className="col-span-2 text-center">Est. Pax</div>
-                <div className="col-span-2 text-center">First HV</div>
-                <div className="col-span-2 text-center">Last HV</div>
+                <div className="col-span-2 text-center">Actual Pax</div>
+                <div className="col-span-1 text-center">First HV</div>
+                <div className="col-span-1 text-center">Last HV</div>
                 <div className="col-span-2 text-center">Peak Hour</div>
               </div>
               <div className="flex flex-col divide-y divide-brand-wood/5 max-h-[500px] overflow-y-auto">
                 {analytics.days.map(d => {
                   const isWeekend = d.dayOfWeek === 'Saturday' || d.dayOfWeek === 'Sunday';
+                  // Delta between actual and estimate as a % of estimate.
+                  // Only render the badge when we have meaningful coverage
+                  // (>50% of departures have a real count) — partial data
+                  // would produce misleading deltas.
+                  const hasActuals = d.actualDeparturesWithCount > 0 && d.actualCoverage >= 0.5;
+                  const delta = hasActuals && d.totalPassengers > 0
+                    ? Math.round(((d.actualPassengers - d.totalPassengers) / d.totalPassengers) * 100)
+                    : null;
                   return (
                     <div key={d.date} className={`grid grid-cols-12 gap-2 px-6 py-3 items-center hover:bg-brand-cream/30 transition-colors ${isWeekend ? 'bg-brand-teal/[0.02]' : ''}`}>
                       <div className="col-span-2">
@@ -435,8 +447,31 @@ export default function FlightsPage() {
                         <span className={`text-sm font-semibold ${d.hvDepartures > 5 ? 'text-brand-gold' : 'text-brand-wood/70'}`}>{d.hvDepartures}</span>
                       </div>
                       <div className="col-span-2 text-center text-sm font-medium text-brand-black">{d.totalPassengers.toLocaleString()}</div>
-                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.firstHVDeparture ? formatTime12(d.firstHVDeparture) : '—'}</div>
-                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.lastHVDeparture ? formatTime12(d.lastHVDeparture) : '—'}</div>
+                      <div className="col-span-2 text-center">
+                        {d.actualDeparturesWithCount > 0 ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-sm font-semibold text-brand-teal">{d.actualPassengers.toLocaleString()}</span>
+                            {delta !== null && (
+                              <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                                delta > 5 ? 'bg-green-50 text-green-700 border border-green-200'
+                                : delta < -5 ? 'bg-red-50 text-red-700 border border-red-200'
+                                : 'bg-brand-wood/5 text-brand-wood/70 border border-brand-wood/10'
+                              }`}>
+                                {delta > 0 ? '+' : ''}{delta}%
+                              </span>
+                            )}
+                            {d.actualCoverage < 1 && (
+                              <span className="text-[9px] text-brand-wood/40">
+                                {d.actualDeparturesWithCount}/{d.departures} flights
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-brand-wood/30">—</span>
+                        )}
+                      </div>
+                      <div className="col-span-1 text-center text-xs text-brand-wood/70">{d.firstHVDeparture ? formatTime12(d.firstHVDeparture) : '—'}</div>
+                      <div className="col-span-1 text-center text-xs text-brand-wood/70">{d.lastHVDeparture ? formatTime12(d.lastHVDeparture) : '—'}</div>
                       <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.peakHour ? formatTime12(d.peakHour) : '—'}</div>
                     </div>
                   );

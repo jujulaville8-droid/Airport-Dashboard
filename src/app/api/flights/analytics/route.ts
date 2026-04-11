@@ -12,6 +12,14 @@ interface DayAnalytics {
   hvDepartures: number; // 100+ pax
   totalPassengers: number;
   hvPassengers: number;
+  // Actual passenger counts from ABAA Carrier Passenger Summary emails.
+  // `actualPassengers` sums only the departures with a confirmed number;
+  // `actualCoverage` is the fraction of departures on this day that have
+  // an actual count (0.0–1.0). Both are zero when no email has been
+  // ingested for the day yet.
+  actualPassengers: number;
+  actualDeparturesWithCount: number;
+  actualCoverage: number;
   firstHVDeparture: string | null;
   lastHVDeparture: string | null;
   peakHour: string | null; // hour with most departures
@@ -52,6 +60,18 @@ export async function GET(request: NextRequest) {
         const totalPax = departures.reduce((sum, f) => sum + (f.estimated_passengers as number), 0);
         const hvPax = hvDeps.reduce((sum, f) => sum + (f.estimated_passengers as number), 0);
 
+        // Actual pax totals (departures only, from the carrier capacity emails)
+        const actualDepartures = departures.filter(
+          (f) => f.actual_passengers !== null && f.actual_passengers !== undefined
+        );
+        const actualPax = actualDepartures.reduce(
+          (sum, f) => sum + (f.actual_passengers as number),
+          0
+        );
+        const actualCoverage = departures.length > 0
+          ? actualDepartures.length / departures.length
+          : 0;
+
         // Peak hour
         const hourCounts: Record<string, number> = {};
         for (const f of departures) {
@@ -74,6 +94,9 @@ export async function GET(request: NextRequest) {
           hvDepartures: hvDeps.length,
           totalPassengers: totalPax,
           hvPassengers: hvPax,
+          actualPassengers: actualPax,
+          actualDeparturesWithCount: actualDepartures.length,
+          actualCoverage: Math.round(actualCoverage * 100) / 100,
           firstHVDeparture: hvDeps.length > 0 ? (hvDeps[0].scheduled_time as string).substring(11, 16) : null,
           lastHVDeparture: hvDeps.length > 0 ? (hvDeps[hvDeps.length - 1].scheduled_time as string).substring(11, 16) : null,
           peakHour,

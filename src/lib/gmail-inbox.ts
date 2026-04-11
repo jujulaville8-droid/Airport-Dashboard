@@ -3,6 +3,7 @@ import { importSalesReport, importDailySalesReport } from './counterpoint';
 import { importItemSales } from './counterpoint-items';
 import { importInventorySnapshot } from './counterpoint-inventory';
 import { importFlightSchedule } from './flight-schedule';
+import { importCarrierCapacityEmail } from './carrier-capacity-importer';
 import { logImport } from './db';
 
 /**
@@ -37,6 +38,7 @@ type AttachmentType =
   | 'item_sales'
   | 'inventory_snapshot'
   | 'flight_schedule'
+  | 'carrier_capacity'   // body-only import, no attachment
   | 'unknown';
 
 export interface InboxScanResult {
@@ -219,6 +221,54 @@ interface GmailAttachment {
   size: number;
 }
 
+/**
+ * Walk the MIME tree and return the best plain-text representation of the
+ * email body for subject-based body parsers (Carrier Passenger Summary).
+ *
+ * Strategy:
+ *   - Prefer `text/plain` parts when available
+ *   - Fall back to stripping HTML tags from `text/html` if no plain part
+ *   - Collapse all whitespace to single spaces so the regex parsers can
+ *     treat the body as one long line (the airport emails are heavy on
+ *     soft line breaks that would otherwise split flight lines)
+ */
+function extractPlainTextBody(payload: gmail_v1.Schema$MessagePart | undefined): string {
+  if (!payload) return '';
+  const plainParts: string[] = [];
+  const htmlParts: string[] = [];
+
+  const walk = (part: gmail_v1.Schema$MessagePart) => {
+    const mime = (part.mimeType ?? '').toLowerCase();
+    const data = part.body?.data;
+    if (data) {
+      if (mime === 'text/plain') {
+        plainParts.push(Buffer.from(data, 'base64url').toString('utf8'));
+      } else if (mime === 'text/html') {
+        htmlParts.push(Buffer.from(data, 'base64url').toString('utf8'));
+      }
+    }
+    for (const child of part.parts ?? []) walk(child);
+  };
+  walk(payload);
+
+  let body = plainParts.join('\n').trim();
+  if (!body && htmlParts.length > 0) {
+    // Cheap HTML → text: drop tags, decode a few common entities
+    body = htmlParts
+      .join('\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }
+  // Collapse all whitespace to single spaces so the regex parsers can
+  // treat soft-wrapped flight lines as one continuous stream
+  return body.replace(/\s+/g, ' ').trim();
+}
+
 function collectAttachments(payload: gmail_v1.Schema$MessagePart | undefined): GmailAttachment[] {
   if (!payload) return [];
   const out: GmailAttachment[] = [];
@@ -328,6 +378,11 @@ async function routeAttachment(
           : `flights failed: ${(r.errors ?? []).join('; ')}`,
       };
     }
+    case 'carrier_capacity':
+      // Carrier capacity emails never reach this router — they're handled
+      // inline in scanInbox because they're body-only (no attachment). This
+      // branch exists only to keep TypeScript's exhaustiveness check happy.
+      return { ok: false, detail: 'carrier_capacity should be handled inline, not routed through attachment pipeline' };
     case 'unknown':
       return { ok: false, detail: 'unrecognized file type' };
   }
@@ -344,9 +399,17 @@ export async function scanInbox(): Promise<InboxScanResult> {
     scanned: 0, imported: 0, failed: 0, skipped: 0, details: [],
   };
 
-  // Any message with an attachment we haven't already stamped with one of
-  // our labels. Cap at 25 per run to keep each cron invocation bounded.
-  const q = `has:attachment -label:${LABEL_IMPORTED} -label:${LABEL_FAILED}`;
+  // Pull two groups in one query:
+  //   1. Anything with an attachment (Counterpoint / inventory / flight PDF)
+  //   2. Carrier Passenger Summary emails — these are plain-text body-only
+  //      and only have Outlook signature images, so has:attachment misses
+  //      them. Subject match catches both fresh and forwarded variants.
+  //
+  // Either group is excluded if already stamped with one of our labels.
+  // Cap at 25 per run to keep each cron invocation bounded.
+  const q =
+    `(has:attachment OR subject:"Carrier Passenger Summary") ` +
+    `-label:${LABEL_IMPORTED} -label:${LABEL_FAILED}`;
   const list = await gmail.users.messages.list({
     userId: 'me',
     q,
@@ -376,6 +439,44 @@ export async function scanInbox(): Promise<InboxScanResult> {
         attachment: '', type: 'unknown',
         status: 'skipped', reason: 'sender not in allow-list',
       });
+      continue;
+    }
+
+    // Carrier Passenger Summary emails are body-only — no data attachment,
+    // just Outlook signature PNGs. Handle them before we go hunting for
+    // attachments to parse.
+    if (/carrier\s+passenger\s+summary/i.test(subject)) {
+      const body = extractPlainTextBody(full.data.payload ?? undefined);
+      const receivedDate = full.data.internalDate
+        ? new Date(Number(full.data.internalDate)).toISOString()
+        : undefined;
+      try {
+        const r = await importCarrierCapacityEmail(subject, body, receivedDate, 'email');
+        const detail = r.success
+          ? `capacity ${r.flight_date}: ${r.flightsMatched}/${r.flightsParsed} flights matched` +
+            (r.flightsUnmatched > 0 ? ` (${r.flightsUnmatched} unmatched: ${r.unmatchedFlights.slice(0, 3).join(', ')})` : '')
+          : `capacity failed: ${r.errors.join('; ') || r.warnings.join('; ') || 'no matches'}`;
+        await applyLabel(gmail, messageId, r.success ? labels.imported : labels.failed, true);
+        if (r.success) {
+          result.imported += 1;
+        } else {
+          result.failed += 1;
+        }
+        result.details.push({
+          messageId, from, subject,
+          attachment: '(body only)', type: 'carrier_capacity',
+          status: r.success ? 'imported' : 'failed', reason: detail,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await applyLabel(gmail, messageId, labels.failed, true);
+        result.failed += 1;
+        result.details.push({
+          messageId, from, subject,
+          attachment: '(body only)', type: 'carrier_capacity',
+          status: 'failed', reason: msg,
+        });
+      }
       continue;
     }
 
