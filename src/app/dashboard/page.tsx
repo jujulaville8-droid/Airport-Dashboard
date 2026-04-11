@@ -17,6 +17,7 @@ import {
   ArrowClockwise,
 } from '@phosphor-icons/react';
 import MetricCard from '@/components/MetricCard';
+import { formatTime12 } from '@/lib/date-utils';
 
 interface FlightRow {
   id: number;
@@ -180,11 +181,7 @@ export default function OverviewPage() {
     anime({ targets: e.currentTarget, scale: 1, translateY: 0, duration: 400, easing: 'easeOutExpo' });
   };
 
-  const formatTime = (timeStr: string) => {
-    if (!timeStr) return '--:--';
-    // Handles both "HH:MM" and "HH:MM:SS" from the DB
-    return timeStr.substring(0, 5);
-  };
+  const formatTime = (timeStr: string) => formatTime12(timeStr);
 
   return (
     <div className="px-6 md:px-10 lg:px-14">
@@ -199,7 +196,7 @@ export default function OverviewPage() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px] font-medium text-brand-wood/60 hidden md:inline">
-            Updated {lastRefresh.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+            Updated {lastRefresh.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
           </span>
           <button
             onClick={fetchData}
@@ -263,7 +260,7 @@ export default function OverviewPage() {
                       <span className="text-sm font-semibold text-brand-black">{s.staff_name}</span>
                     </div>
                     <span className="text-sm font-medium text-brand-wood/80">
-                      {s.shift_start.substring(0, 5)} – {s.shift_end.substring(0, 5)}
+                      {formatTime12(s.shift_start)} – {formatTime12(s.shift_end)}
                     </span>
                     <span className="text-xs text-brand-wood/60">{s.shift_hours}h</span>
                   </div>

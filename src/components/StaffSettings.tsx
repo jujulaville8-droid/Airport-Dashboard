@@ -11,6 +11,7 @@ import {
   CaretUp,
   GearSix,
 } from '@phosphor-icons/react';
+import { formatTime12 } from '@/lib/date-utils';
 
 interface StaffMember {
   id: number;
@@ -279,7 +280,7 @@ export default function StaffSettings() {
                         {!s.is_active && <span className="text-[10px] font-medium text-red-500 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">Inactive</span>}
                       </div>
                       <div className="text-[11px] text-brand-wood/60 mt-0.5">
-                        {s.available_start}–{s.available_end} · {s.min_hours_per_day}–{s.max_hours_per_day}h/day
+                        {formatTime12(s.available_start)}–{formatTime12(s.available_end)} · {s.min_hours_per_day}–{s.max_hours_per_day}h/day
                         {s.weekly_hour_target && ` · ${s.weekly_hour_target}h/week target`}
                         {s.days_off_per_week && ` · ${s.days_off_per_week} days off/week`}
                       </div>

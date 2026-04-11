@@ -11,6 +11,7 @@ import {
   Trash,
   CalendarBlank,
 } from '@phosphor-icons/react';
+import { formatTime12 } from '@/lib/date-utils';
 
 interface UploadedMonth {
   month: string;
@@ -370,9 +371,9 @@ export default function FlightsPage() {
                         <span className={`text-sm font-semibold ${d.hvDepartures > 5 ? 'text-brand-gold' : 'text-brand-wood/70'}`}>{d.hvDepartures}</span>
                       </div>
                       <div className="col-span-2 text-center text-sm font-medium text-brand-black">{d.totalPassengers.toLocaleString()}</div>
-                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.firstHVDeparture || '—'}</div>
-                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.lastHVDeparture || '—'}</div>
-                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.peakHour || '—'}</div>
+                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.firstHVDeparture ? formatTime12(d.firstHVDeparture) : '—'}</div>
+                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.lastHVDeparture ? formatTime12(d.lastHVDeparture) : '—'}</div>
+                      <div className="col-span-2 text-center text-xs text-brand-wood/70">{d.peakHour ? formatTime12(d.peakHour) : '—'}</div>
                     </div>
                   );
                 })}

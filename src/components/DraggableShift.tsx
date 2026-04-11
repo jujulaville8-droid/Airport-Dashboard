@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useState } from 'react';
+import { formatTime12 } from '@/lib/date-utils';
 
 interface DraggableShiftProps {
   staffName: string;
@@ -139,7 +140,7 @@ export default function DraggableShift({ start, end, color, timeToPercent, onUpd
           onMouseDown={handleMouseDown('move')}
           className="flex-1 px-4 cursor-grab active:cursor-grabbing select-none"
         >
-          <span className="ml-2">{displayStart}–{displayEnd} ({hours}h)</span>
+          <span className="ml-2">{formatTime12(displayStart)}–{formatTime12(displayEnd)} ({hours}h)</span>
         </div>
 
         {/* Right drag handle */}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import anime from 'animejs';
 import DraggableShift from '@/components/DraggableShift';
 import StaffSettings from '@/components/StaffSettings';
+import { formatTime12 } from '@/lib/date-utils';
 import {
   CalendarBlank,
   AirplaneTakeoff,
@@ -574,7 +575,7 @@ export default function SchedulesPage() {
               </div>
               <div className="bg-white rounded-[16px] border border-brand-wood/15 p-5 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
                 <div className="flex justify-between text-[10px] font-medium text-brand-wood/40 mb-3 ml-[120px]">
-                  {['09:00', '11:00', '13:00', '15:00', '17:00', '20:00'].map(t => (
+                  {['9am', '11am', '1pm', '3pm', '5pm', '8pm'].map(t => (
                     <span key={t}>{t}</span>
                   ))}
                 </div>
@@ -660,8 +661,8 @@ export default function SchedulesPage() {
                               </div>
                               {/* Tooltip */}
                               <div className="hidden group-hover:block absolute top-7 bg-brand-black text-white text-[9px] px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap z-30 leading-relaxed">
-                                <span className="font-bold">{flight.flight_num}</span> departs {flightTime}<br/>
-                                Shop window: {minutesToTime(shopWindowStart)}<br/>
+                                <span className="font-bold">{flight.flight_num}</span> departs {formatTime12(flightTime)}<br/>
+                                Shop window: {formatTime12(minutesToTime(shopWindowStart))}<br/>
                                 ~{flight.estimated_passengers} passengers
                                 {!isCovered && <><br/><span className="text-red-300 font-bold">NOT COVERED</span></>}
                               </div>
