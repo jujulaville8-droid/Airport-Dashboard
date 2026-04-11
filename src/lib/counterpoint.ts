@@ -309,20 +309,18 @@ function parseCounterpointXLS(buffer: Buffer): {
     if (m) monthName = m[1];
   }
 
-  if (!detected) {
-    warnings.push(
-      `No recognizable header row found; parser used ${winnerLabel} column layout ` +
-      `(sales=col ${cols.sales}, tickets=col ${cols.tickets}). ` +
-      `Totals reconciliation below will catch any misalignment.`
-    );
-  }
-
   // ---------- Totals reconciliation ----------
   // If the sheet declares a "Report totals" / "Grand total" row, compare our
   // computed sum to it. A mismatch > 0.01 means we parsed the wrong columns —
   // surface an error the caller can refuse the import on.
+  //
+  // When reconciliation passes we stay silent, regardless of which layout
+  // won — successful imports shouldn't emit scary warnings. We only warn
+  // about the fallback layout if we have no declared total to verify
+  // against (and thus can't prove correctness).
   let reconcileError: string | null = null;
   const declaredTotal = findDeclaredTotal(data, cols);
+  let reconciled = false;
   if (declaredTotal !== null && days.length > 0) {
     const computedTotal = days.reduce((s, d) => s + d.sales, 0);
     const delta = Math.abs(computedTotal - declaredTotal);
@@ -331,7 +329,20 @@ function parseCounterpointXLS(buffer: Buffer): {
         `Totals mismatch: Counterpoint report declares $${declaredTotal.toFixed(2)} ` +
         `but parser extracted $${computedTotal.toFixed(2)} (delta $${delta.toFixed(2)}). ` +
         `The file's column layout may have changed. Import aborted to prevent corrupt data.`;
+    } else {
+      reconciled = true;
     }
+  }
+
+  // Only surface the "used fallback layout" warning when we couldn't
+  // independently verify correctness via the totals row. With successful
+  // reconciliation we know we parsed it right — no warning needed.
+  if (!detected && !reconciled) {
+    warnings.push(
+      `No recognizable header row found and no "Report totals" row to verify against; ` +
+      `parser used ${winnerLabel} column layout (sales=col ${cols.sales}, tickets=col ${cols.tickets}). ` +
+      `Spot-check a few daily totals to confirm correctness.`
+    );
   }
 
   return { days, month: monthName, year, warnings, reconcileError };
