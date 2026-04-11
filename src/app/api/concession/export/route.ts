@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/db';
 import { NextRequest } from 'next/server';
-import * as XLSX from 'xlsx';
+// xlsx-js-style is a drop-in fork of the standard xlsx package that preserves
+// cell styles (fills, fonts, borders) on write. The upstream xlsx@0.18.5
+// package reads styles but silently drops them during XLSX.write, so it's
+// unusable for templated exports where we care about green highlights, etc.
+import * as XLSX from 'xlsx-js-style';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -122,15 +126,23 @@ export async function GET(request: NextRequest) {
     const sheet = wb.Sheets[wb.SheetNames[0]];
 
     // --- Populate user-input cells ---
-    sheet['B5']  = { t: 'n', v: toExcelDateSerial(`${month}-01`) };
-    sheet['B8']  = { t: 'n', v: round2(grossSalesUSD) };
-    sheet['B10'] = { t: 'n', v: round2(actualCCSalesUSD) };
-    sheet['B13'] = { t: 'n', v: round2(actualCashSalesUSD) };
+    // Spread over the template cell so we preserve its number format (z)
+    // and any styles — direct replacement would drop them and the exported
+    // file would show raw numeric values instead of the formatted currency.
+    sheet['B5']  = { ...sheet['B5'],  v: toExcelDateSerial(`${month}-01`) };
+    sheet['B8']  = { ...sheet['B8'],  v: round2(grossSalesUSD) };
+    sheet['B10'] = { ...sheet['B10'], v: round2(actualCCSalesUSD) };
+    sheet['B13'] = { ...sheet['B13'], v: round2(actualCashSalesUSD) };
 
     // --- Precompute cached values for formula cells ---
-    // Formulas themselves (sheet['C8'].f etc.) are preserved from the template
-    // via the { ...existing, v } spread — except C18 and C19 where we override
-    // the template's hardcoded MAG and payable logic (see below).
+    //
+    // Mirror the template's math and formula structure exactly — no
+    // overrides — so the exported file matches the airport authority's
+    // original template. Every cell uses `{ ...sheet[addr], v }` to preserve
+    // the template's formula (`f`), number format (`z`, including the
+    // accounting-brackets rendering for negatives), and cell styles
+    // (`s`, including the green fills baked in by
+    // scripts/restyle-concession-template.js).
     const c8 = grossSalesUSD * EC_RATE;
     const c10 = actualCCSalesUSD * EC_RATE;
     const c11 = -(c10 * CC_COMMISSION);
@@ -138,38 +150,40 @@ export async function GET(request: NextRequest) {
     const c13 = actualCashSalesUSD * EC_RATE;
     const c15 = c12 + c13;
     const c17 = c15 * RENT_PERCENT;
-
-    // C18 = MAG exclusive of ABST, as shipped in the template and billed
-    // by the airport. Shown as a negative credit against percentage rent
-    // (matching the template's sign convention).
     const c18 = -MAG_ECD;
-
-    // C19 "Concession Payable" = MAX(0, C17 + C18).
-    // Percentage rent floors the payable — in low-sales months where rent
-    // doesn't exceed MAG, the payable is $0 (MAG is already prepaid), never
-    // a negative "refund". We also overwrite the template's C17+C18 formula
-    // with a MAX() formula so a user recalculating in Excel gets the same
-    // answer our cached value shows.
-    const c19 = Math.max(0, c17 + c18);
+    const c19 = c17 + c18;
     const g12 = c8 - c10 - c13;
 
-    sheet['C8'] = { ...sheet['C8'], v: round2(c8) };
+    sheet['C8']  = { ...sheet['C8'],  v: round2(c8) };
     sheet['C10'] = { ...sheet['C10'], v: round2(c10) };
     sheet['C11'] = { ...sheet['C11'], v: round2(c11) };
     sheet['C12'] = { ...sheet['C12'], v: round2(c12) };
     sheet['C13'] = { ...sheet['C13'], v: round2(c13) };
     sheet['C15'] = { ...sheet['C15'], v: round2(c15) };
     sheet['C17'] = { ...sheet['C17'], v: round2(c17) };
-
-    // C18: write the MAG as a literal negative. Template already labels
-    // this "Less: MAG (Exclusive of ABST)" — we leave that intact.
-    sheet['C18'] = { t: 'n', v: round2(c18) };
-
-    // C19: replace the template's `C17+C18` formula with MAX(0, C17+C18)
-    // so the file audits correctly if opened and recalculated.
-    sheet['C19'] = { t: 'n', f: 'MAX(0, C17+C18)', v: round2(c19) };
-
+    sheet['C18'] = { ...sheet['C18'], v: round2(c18) };
+    sheet['C19'] = { ...sheet['C19'], v: round2(c19) };
     sheet['G12'] = { ...sheet['G12'], v: round2(g12) };
+
+    // --- Apply visual highlights at runtime ---
+    //
+    // Green fill on the three gross-sales rows (B8/C8 total gross, B10/C10
+    // credit card gross, B13/C13 cash gross). We apply at runtime because
+    // xlsx-js-style's reader output shape for `s` (flat, {patternType,
+    // fgColor}) doesn't match its writer's input shape (nested, {fill:
+    // {fgColor}}) — so styles don't survive a read/modify/write cycle if
+    // they're baked into the template. Applying here in the writer's
+    // expected shape gives a single source of truth.
+    const GREEN_FILL = {
+      fill: { fgColor: { rgb: 'C6EFCE' }, patternType: 'solid' },
+      font: { color: { rgb: '006100' }, bold: true },
+    };
+    for (const addr of ['B8', 'C8', 'B10', 'C10', 'B13', 'C13'] as const) {
+      const cell = sheet[addr] as XLSX.CellObject | undefined;
+      if (cell) {
+        (cell as XLSX.CellObject & { s?: unknown }).s = GREEN_FILL;
+      }
+    }
 
     // Tell Excel / LibreOffice to force a full recalc when the file opens.
     // Belt-and-suspenders with the precomputed cached values above.
