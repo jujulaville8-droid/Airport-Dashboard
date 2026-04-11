@@ -24,6 +24,7 @@ export async function proxy(request: NextRequest) {
   const isPublicPath =
     pathname === '/login' ||
     pathname.startsWith('/auth/') ||
+    pathname.startsWith('/api/cron/') ||
     pathname === '/favicon.ico';
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
