@@ -71,10 +71,20 @@ const HEADER_ALIASES: Record<string, string[]> = {
   ],
 };
 
-// Default fallback column positions (what the original hardcoded parser used).
-// Used only if header detection can't find a recognizable header row — and when
-// we fall back, we push a warning so the caller knows the file may be drifting.
-const FALLBACK_COLS = { sales: 12, tickets: 15, discounts: 19, returns: 25 };
+// Default fallback column positions, in priority order. Used only when header
+// detection can't find a recognizable header row. We try each layout and pick
+// whichever extracts the most valid day rows — that way new Counterpoint
+// exports with compressed column counts (10 cols, sales at D) still parse
+// without requiring the user to re-export their old reports.
+//
+// Known layouts:
+//   - LEGACY: the old verbose "Sales Analysis by Month/day" (~26 cols)
+//   - COMPACT: newer condensed format (10 cols) — observed April 2026
+const FALLBACK_LAYOUTS: Array<{ sales: number; tickets: number; discounts: number; returns: number }> = [
+  { sales: 12, tickets: 15, discounts: 19, returns: 25 }, // LEGACY
+  { sales: 3, tickets: 5, discounts: 7, returns: 9 },     // COMPACT
+];
+const FALLBACK_COLS = FALLBACK_LAYOUTS[0];
 
 // Tolerance for total reconciliation (floating-point + rounding slop)
 const RECONCILE_TOLERANCE = 0.01;
@@ -213,67 +223,98 @@ function parseCounterpointXLS(buffer: Buffer): {
     throw new Error('Could not determine report year from Counterpoint file header');
   }
 
-  // ---------- Find the column layout ----------
-  const detected = detectHeaderRow(data);
-  const cols = detected?.cols ?? FALLBACK_COLS;
-  if (!detected) {
-    warnings.push(
-      `Could not find a header row with recognizable column names. ` +
-      `Falling back to legacy column positions (sales=M, tickets=P, discounts=T, returns=Z). ` +
-      `If totals look wrong, the Counterpoint report layout may have changed.`
-    );
-  }
-
   // ---------- Extract daily data ----------
   // Counterpoint's peculiar layout: sales numbers live on one row; the
   // description ("February 1") lives in column A of the *next* row.
-  const days: DailySales[] = [];
+  //
+  // We try header-based column detection first, then fall back to each known
+  // hardcoded layout, and pick whichever extracts the most valid day rows.
+  // This makes the parser resilient to layout changes in Counterpoint exports.
+  function extractDays(cols: { sales: number; tickets: number; discounts: number; returns: number }): DailySales[] {
+    const out: DailySales[] = [];
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length === 0) continue;
 
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
+      const salesVal = row[cols.sales];
+      if (typeof salesVal !== 'number' || !Number.isFinite(salesVal)) continue;
 
-    const salesVal = row[cols.sales];
-    if (typeof salesVal !== 'number' || !Number.isFinite(salesVal)) continue;
+      const nextRow = data[i + 1];
+      const desc = nextRow ? String(nextRow[0] || '') : '';
+      if (!desc) continue;
 
-    const nextRow = data[i + 1];
-    const desc = nextRow ? String(nextRow[0] || '') : '';
+      const lowerDesc = desc.toLowerCase();
+      if (
+        lowerDesc.includes('report total') ||
+        lowerDesc.includes('grand total') ||
+        lowerDesc.includes('groups') ||
+        /^\s*totals?\s*:?\s*$/i.test(desc)
+      ) {
+        continue;
+      }
 
-    // Skip totals and non-day rows. Matching the totals-row check here is
-    // important — we don't want "Report totals" to be included in the sum.
-    if (!desc) continue;
-    const lowerDesc = desc.toLowerCase();
-    if (
-      lowerDesc.includes('report total') ||
-      lowerDesc.includes('grand total') ||
-      lowerDesc.includes('groups') ||
-      /^\s*totals?\s*:?\s*$/i.test(desc)
-    ) {
-      continue;
+      const dayMatch = desc.match(/(\w+)\s+(\d+)/);
+      if (!dayMatch) continue;
+
+      const mn = dayMatch[1];
+      const dayNum = parseInt(dayMatch[2], 10);
+      const monthNum = MONTHS[mn];
+      if (!monthNum) continue;
+
+      const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+
+      const ticketsVal = row[cols.tickets];
+      const discountsVal = row[cols.discounts];
+      const returnsVal = row[cols.returns];
+
+      out.push({
+        date: dateStr,
+        description: desc.trim(),
+        sales: salesVal,
+        tickets: typeof ticketsVal === 'number' && Number.isFinite(ticketsVal) ? ticketsVal : 0,
+        discounts: typeof discountsVal === 'number' && Number.isFinite(discountsVal) ? discountsVal : 0,
+        returns: typeof returnsVal === 'number' && Number.isFinite(returnsVal) ? returnsVal : 0,
+      });
     }
+    return out;
+  }
 
-    const dayMatch = desc.match(/(\w+)\s+(\d+)/);
-    if (!dayMatch) continue;
+  // Try candidate column layouts in priority order: detected header first,
+  // then each hardcoded fallback. Pick whichever yields the most day rows.
+  const detected = detectHeaderRow(data);
+  const candidates: Array<{ label: string; cols: typeof FALLBACK_COLS }> = [];
+  if (detected) {
+    candidates.push({ label: 'header-detected', cols: detected.cols });
+  }
+  for (let i = 0; i < FALLBACK_LAYOUTS.length; i++) {
+    candidates.push({ label: i === 0 ? 'legacy-fallback' : 'compact-fallback', cols: FALLBACK_LAYOUTS[i] });
+  }
 
-    monthName = dayMatch[1];
-    const dayNum = parseInt(dayMatch[2], 10);
-    const monthNum = MONTHS[monthName];
-    if (!monthNum) continue;
+  let cols = candidates[0].cols;
+  let days: DailySales[] = [];
+  let winnerLabel = candidates[0].label;
+  for (const cand of candidates) {
+    const extracted = extractDays(cand.cols);
+    if (extracted.length > days.length) {
+      days = extracted;
+      cols = cand.cols;
+      winnerLabel = cand.label;
+    }
+  }
 
-    const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+  // Pull monthName off any successful day for downstream use
+  if (days.length > 0) {
+    const firstDesc = days[0].description;
+    const m = firstDesc.match(/(\w+)/);
+    if (m) monthName = m[1];
+  }
 
-    const ticketsVal = row[cols.tickets];
-    const discountsVal = row[cols.discounts];
-    const returnsVal = row[cols.returns];
-
-    days.push({
-      date: dateStr,
-      description: desc.trim(),
-      sales: salesVal,
-      tickets: typeof ticketsVal === 'number' && Number.isFinite(ticketsVal) ? ticketsVal : 0,
-      discounts: typeof discountsVal === 'number' && Number.isFinite(discountsVal) ? discountsVal : 0,
-      returns: typeof returnsVal === 'number' && Number.isFinite(returnsVal) ? returnsVal : 0,
-    });
+  if (!detected) {
+    warnings.push(
+      `No recognizable header row found; parser used ${winnerLabel} column layout ` +
+      `(sales=col ${cols.sales}, tickets=col ${cols.tickets}). ` +
+      `Totals reconciliation below will catch any misalignment.`
+    );
   }
 
   // ---------- Totals reconciliation ----------
