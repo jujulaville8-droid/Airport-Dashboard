@@ -1,7 +1,13 @@
 import { supabase } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
-const MAG_ECD = 4198;           // Monthly MAG in ECD
+// MAG is shipped ex-ABST at 4,198 ECD; we gross it up by the 13% ABST rate
+// so every surface of the dashboard reports the same tax-inclusive figure
+// the airport authority actually bills. Keep in sync with
+// src/app/api/concession/export/route.ts.
+const MAG_EXCL_ABST = 4198;
+const ABST_RATE = 0.13;
+const MAG_ECD = MAG_EXCL_ABST * (1 + ABST_RATE); // 4743.74
 const THRESHOLD_USD = 22248;    // Net sales threshold in USD
 const PERCENTAGE_RATE = 0.10;   // 10% of net sales
 const EC_RATE = 2.7;            // USD to ECD conversion
@@ -100,10 +106,15 @@ export async function GET(request: NextRequest) {
     const totalNetSalesECD = netCCSalesECD + cashSalesECD;
     const totalNetSalesUSD = totalNetSalesECD / EC_RATE;
 
-    // Concession: greater of MAG or 10% of net sales
+    // Concession payable = MAX(0, percentage rent − MAG inclusive of ABST).
+    // MAG is prepaid, so what the shop actually owes this period is the
+    // amount by which 10% of net sales exceeds MAG. In low-sales months
+    // percentage rent is below MAG and the "additional payable" is $0.
+    // (Same logic as the airport authority's concession calculator export —
+    // see src/app/api/concession/export/route.ts.)
     const rentPercentageECD = totalNetSalesECD * PERCENTAGE_RATE;
-    const exceedsThreshold = grossSalesUSD > THRESHOLD_USD;
-    const concessionPayableECD = exceedsThreshold ? rentPercentageECD : MAG_ECD;
+    const exceedsThreshold = rentPercentageECD > MAG_ECD;
+    const concessionPayableECD = Math.max(0, rentPercentageECD - MAG_ECD);
 
     const result: ConcessionResult = {
       month,

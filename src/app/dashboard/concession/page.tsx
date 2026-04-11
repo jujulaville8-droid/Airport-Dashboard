@@ -162,7 +162,12 @@ export default function ConcessionPage() {
 
   const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const threshold = 22248;
+  // Gross USD at which 10% of net sales (in ECD) equals the tax-inclusive MAG.
+  // Derived: MAG_incl / (PERCENTAGE_RATE * EC_RATE) = 4743.74 / (0.10 * 2.7)
+  // ≈ 17,569. Above this line we owe additional rent on top of the already-
+  // prepaid MAG; below it we just pay MAG and nothing extra. Keep in sync
+  // with the MAG/ABST constants in src/app/api/concession/route.ts.
+  const threshold = 17569;
   const progressPct = data ? Math.min((data.grossSalesUSD / threshold) * 100, 100) : 0;
 
   return (
@@ -211,11 +216,11 @@ export default function ConcessionPage() {
                 <div className="flex items-center gap-2">
                   {data.exceedsThreshold ? (
                     <span className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-200">
-                      <WarningCircle size={14} /> Above threshold — paying 10%
+                      <WarningCircle size={14} /> Percentage rent exceeds MAG — additional due
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-3 py-1 rounded-full border border-green-200">
-                      <CheckCircle size={14} /> Below threshold — paying MAG
+                      <CheckCircle size={14} /> Percentage rent below MAG — $0 additional
                     </span>
                   )}
                 </div>
@@ -224,7 +229,7 @@ export default function ConcessionPage() {
               {/* Progress bar to threshold */}
               <div className="mb-2 flex items-center justify-between text-xs text-brand-wood/60">
                 <span>$0</span>
-                <span className="font-medium text-brand-black">Threshold: ${threshold.toLocaleString()} USD</span>
+                <span className="font-medium text-brand-black">MAG break-even: ${threshold.toLocaleString()} USD</span>
               </div>
               <div className="w-full h-4 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(71,85,105,0.1)' }}>
                 <div className="h-full rounded-full transition-all duration-1000" style={{
@@ -234,7 +239,7 @@ export default function ConcessionPage() {
               </div>
               <div className="mt-2 text-sm text-brand-wood/70">
                 Net sales: <span className="font-semibold text-brand-black">${fmt(data.grossSalesUSD)} USD</span>
-                {!data.exceedsThreshold && <span> — ${fmt(threshold - data.grossSalesUSD)} below threshold</span>}
+                {!data.exceedsThreshold && <span> — ${fmt(threshold - data.grossSalesUSD)} below MAG break-even</span>}
               </div>
             </div>
 
@@ -242,7 +247,7 @@ export default function ConcessionPage() {
             <div className="anime-section opacity-0 bg-gradient-to-br from-white to-brand-gold/[0.03] rounded-[20px] border border-brand-wood/15 border-l-[4px] border-l-brand-gold p-6 lg:p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                 <div className="flex-1">
-                  <p className="text-[11px] font-medium text-brand-wood/70 uppercase tracking-wide mb-2">Concession Payable — {formatMonth(selectedMonth)}</p>
+                  <p className="text-[11px] font-medium text-brand-wood/70 uppercase tracking-wide mb-2">Additional Payable — {formatMonth(selectedMonth)}</p>
                   <div className="flex items-baseline gap-4">
                     <h3 className="font-serif text-4xl md:text-5xl text-brand-black">${fmt(data.concessionPayableECD)}</h3>
                     <span className="text-lg text-brand-wood/60">ECD</span>
@@ -250,8 +255,8 @@ export default function ConcessionPage() {
                   <p className="text-sm text-brand-wood/60 mt-2">${fmt(data.concessionPayableUSD)} USD</p>
                   <p className="text-xs text-brand-wood/50 mt-1">
                     {data.exceedsThreshold
-                      ? `10% of net sales ($${fmt(data.totalNetSalesECD)} ECD)`
-                      : `Flat MAG — net sales below $${threshold.toLocaleString()} USD threshold`
+                      ? `10% of net sales ($${fmt(data.rentPercentageECD)} ECD) − MAG ($${fmt(data.magECD)} ECD, incl. 13% ABST)`
+                      : `MAG ($${fmt(data.magECD)} ECD) exceeds 10% of net sales ($${fmt(data.rentPercentageECD)} ECD) — nothing owed on top of MAG this period`
                     }
                   </p>
                 </div>
@@ -350,12 +355,12 @@ export default function ConcessionPage() {
                       <td className="py-3 text-right text-brand-wood/60">${fmt(data.rentPercentageECD)} ECD</td>
                     </tr>
                     <tr className="border-b border-brand-wood/10">
-                      <td className="py-3 text-brand-wood/70">Monthly MAG</td>
+                      <td className="py-3 text-brand-wood/70">Less: MAG (incl. 13% ABST)</td>
                       <td className="py-3 text-right"></td>
-                      <td className="py-3 text-right text-brand-wood/60">${fmt(data.magECD)} ECD</td>
+                      <td className="py-3 text-right text-brand-wood/60">−${fmt(data.magECD)} ECD</td>
                     </tr>
                     <tr>
-                      <td className="py-4 font-bold text-brand-black text-base">Concession Payable</td>
+                      <td className="py-4 font-bold text-brand-black text-base">Additional Payable</td>
                       <td className="py-4 text-right font-bold text-base">${fmt(data.concessionPayableUSD)} USD</td>
                       <td className="py-4 text-right font-bold text-base">${fmt(data.concessionPayableECD)} ECD</td>
                     </tr>
