@@ -22,6 +22,7 @@ export function AppShell({ username, children }: AppShellProps) {
           'pb-[calc(5rem+env(safe-area-inset-bottom))] md:ml-72 md:pb-0',
         ].join(' ')}
         id="dashboard-content"
+        tabIndex={-1}
       >
         {children}
       </main>

@@ -65,21 +65,38 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const DESKTOP_MEDIA_QUERY = '(min-width: 48rem)';
+
+function isHiddenFromFocus(element: HTMLElement) {
+  let current: HTMLElement | null = element;
+
+  while (current) {
+    const style = window.getComputedStyle(current);
+
+    if (
+      current.hidden ||
+      current.hasAttribute('inert') ||
+      current.getAttribute('aria-hidden') === 'true' ||
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.visibility === 'collapse'
+    ) {
+      return true;
+    }
+
+    current = current.parentElement;
+  }
+
+  return false;
+}
+
 function getFocusableElements(container: HTMLElement) {
   return Array.from(
     container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-  ).filter((element) => {
-    const style = window.getComputedStyle(element);
-
-    return (
-      element.tabIndex >= 0 &&
-      !element.hidden &&
-      !element.closest('[inert], [aria-hidden="true"]') &&
-      style.display !== 'none' &&
-      style.visibility !== 'hidden' &&
-      style.visibility !== 'collapse'
-    );
-  });
+  ).filter(
+    (element) =>
+      element.tabIndex >= 0 && !isHiddenFromFocus(element),
+  );
 }
 
 export interface MobileNavigationProps {
@@ -92,6 +109,26 @@ export function MobileNavigation({ pathname }: MobileNavigationProps) {
   const sheetRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
+    const desktopMediaQuery = window.matchMedia?.(DESKTOP_MEDIA_QUERY);
+
+    if (!desktopMediaQuery) {
+      return;
+    }
+
+    function closeAtDesktop(event: MediaQueryListEvent) {
+      if (event.matches) {
+        setIsMoreOpen(false);
+      }
+    }
+
+    desktopMediaQuery.addEventListener('change', closeAtDesktop);
+
+    return () => {
+      desktopMediaQuery.removeEventListener('change', closeAtDesktop);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isMoreOpen || !sheetRef.current) {
       return;
     }
@@ -99,6 +136,7 @@ export function MobileNavigation({ pathname }: MobileNavigationProps) {
     const previousOverflow = document.body.style.overflow;
     const sheet = sheetRef.current;
     const trigger = moreTriggerRef.current;
+    const desktopMediaQuery = window.matchMedia?.(DESKTOP_MEDIA_QUERY);
     const [, firstDestination] = getFocusableElements(sheet);
 
     document.body.style.overflow = 'hidden';
@@ -106,7 +144,12 @@ export function MobileNavigation({ pathname }: MobileNavigationProps) {
 
     return () => {
       document.body.style.overflow = previousOverflow;
-      trigger?.focus();
+
+      if (desktopMediaQuery?.matches) {
+        document.getElementById('dashboard-content')?.focus();
+      } else {
+        trigger?.focus();
+      }
     };
   }, [isMoreOpen]);
 
@@ -152,7 +195,7 @@ export function MobileNavigation({ pathname }: MobileNavigationProps) {
     <>
       <nav
         aria-label="Primary dashboard"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-0.5rem_1.5rem_rgba(18,37,53,0.08)] backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-0.5rem_1.5rem] shadow-nav/10 backdrop-blur md:hidden"
       >
         <ul className="grid grid-cols-5 px-1 py-1.5">
           {MOBILE_NAV.map((item) => {
