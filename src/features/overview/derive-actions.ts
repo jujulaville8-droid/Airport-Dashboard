@@ -49,12 +49,13 @@ export function deriveActions(response: OverviewResponse): OverviewAction[] {
   }
 
   const uncoveredFlight = schedule?.gaps
+    ?.slice()
     .filter((gap) => gap.passengers >= 100)
     .sort(
       (a, b) =>
         b.passengers - a.passengers ||
         a.scheduledAt.localeCompare(b.scheduledAt),
-    )[0];
+    )[0] ?? null;
   if (uncoveredFlight) {
     const search = new URLSearchParams({
       date: response.date,

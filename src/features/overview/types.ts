@@ -68,7 +68,7 @@ export interface ScheduleOverview {
   coverageScore: number | null;
   staffOnDuty: number | null;
   shifts: OverviewShift[];
-  gaps: CoverageGap[];
+  gaps: CoverageGap[] | null;
 }
 
 export interface ConcessionOverview {

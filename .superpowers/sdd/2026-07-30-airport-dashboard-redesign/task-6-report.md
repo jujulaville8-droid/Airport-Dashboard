@@ -40,9 +40,10 @@ Deleted after `rg` proved it had no remaining consumer:
 - A failed or malformed domain is isolated. Other domains continue to return,
   including when connection freshness itself is malformed.
 - Data Connections last-success timestamps enrich sales, inventory, flight,
-  concession, and connection domains. Inventory can fall back to its exact
-  snapshot date. Schedule persistence has no timestamp in the owned contract,
-  so the UI explicitly says `Update time unavailable`.
+  concession, and connection domains. The inventory snapshot date is displayed
+  separately and is never treated as an import-success timestamp. Schedule
+  persistence has no timestamp in the owned contract, so the UI explicitly
+  says `Update time unavailable`.
 - The operating date and current flight minute are both derived in
   `America/Antigua`; this avoids UTC server rollover and early flight expiry.
 - Upcoming flight data excludes departed flights. High-value coverage gaps are
@@ -208,3 +209,121 @@ reference in the new Overview surface.
   explicit about that limitation.
 - Full authenticated browser acceptance across phone, tablet, laptop, and
   wide desktop remains part of the later end-to-end integration task.
+
+## Fix Round 1
+
+The first review round hardened the dashboard brief without expanding its
+route ownership:
+
+- Every overview domain request now owns an independent eight-second abort
+  budget. A hung endpoint settles as that domain's error while the other five
+  results still return.
+- Refresh retention is scoped to the data period: sales, flights, and schedule
+  data cannot cross an operating-day boundary; concession data cannot cross a
+  month boundary. Inventory and connection-health data may remain visible as
+  last-valid results.
+- Connection normalization now requires the five unique canonical sources,
+  valid status values, real nullable instants, and rejects `overall: healthy`
+  when any source is unhealthy. Malformed health data remains an isolated
+  domain error. Timestamp rendering also degrades to `Time unavailable`.
+- Schedule coverage falls back to the schedule response's embedded flights
+  when the flights domain fails. If neither source supplies flight evidence,
+  `gaps` is explicitly `null`; the panel shows `Coverage gaps unknown` and
+  never styles a fabricated zero as positive. Evidence-backed uncovered-flight
+  actions are preserved.
+- Inventory `updatedAt` now comes only from the normalized inventory import's
+  `lastSuccessAt`. The panel labels the separate business date as
+  `Snapshot dated …`.
+- The five detail areas are typed components:
+  `SalesPacePanel`, `UpcomingTrafficPanel`, `StaffCoveragePanel`,
+  `InventoryActionPanel`, and `ImportHealthPanel`. `OverviewPage` now owns
+  request state, merging, header context, priority actions, and composition.
+- The header adds an Antigua-local greeting and a compact aggregate summary of
+  current, stale, unknown-time, and unavailable domains.
+
+### Fix Round 1 TDD evidence
+
+The focused suite first failed in exactly the new contract areas:
+
+```text
+npm test -- --run src/features/overview/overview.test.tsx
+Test Files 1 failed (1)
+Tests 12 failed | 9 passed (21)
+exit code 1
+```
+
+The failures included the still-pending hung request, accepted malformed
+connection payloads, empty rather than embedded/unknown gaps, snapshot date
+used as freshness, missing greeting/summary, cross-period retained data, and
+missing defensive UI states.
+
+After the fixes and one self-review regression for the real
+`not-configured` contract:
+
+```text
+npm test -- --run src/features/overview/overview.test.tsx \
+  src/features/overview/derive-actions.test.ts
+Test Files 2 passed (2)
+Tests 35 passed (35)
+exit code 0
+```
+
+### Fix Round 1 verification
+
+```text
+npm test
+Test Files 13 passed (13)
+Tests 105 passed (105)
+exit code 0
+
+npm run typecheck
+tsc --noEmit
+exit code 0
+
+npm run lint
+eslint
+exit code 0
+
+npm run build
+Compiled successfully
+Finished TypeScript
+Generated static pages (39/39)
+exit code 0
+
+git diff --check
+exit code 0
+```
+
+The first build attempt again reached the restricted network boundary while
+resolving the project's existing Google Fonts. After explicit network
+permission, the production build passed.
+
+### Fix Round 1 code review
+
+The scoped review found three high-severity contract gaps and one medium
+timestamp-ordering issue:
+
+1. Real schedule-embedded flights omit `id`, so fallback rows were initially
+   discarded.
+2. The abort timer was cleared after headers but before a stalled response body
+   settled.
+3. Source status values were not yet constrained by their attempt/success
+   timestamps or aggregate attention state.
+4. Parseable timestamp strings were compared lexicographically.
+
+All four were fixed. Embedded evidence receives a stable synthetic identity;
+the regression now uses the exact producer shape. JSON parsing is awaited
+inside the timeout boundary and a stalled-body regression proves isolation.
+Health statuses now enforce their timestamp invariants while preserving the
+real `not-configured` override. Timestamps require an ISO instant with an
+explicit timezone and latest freshness is selected by epoch time.
+
+The first re-review identified two final PostgreSQL contract details:
+microsecond precision and the producer invariant that healthy/stale attempt
+and success timestamps are identical. Both were covered and fixed. The final
+scoped re-review returned:
+
+```text
+No remaining actionable findings.
+Verdict: APPROVED — ready to merge.
+```

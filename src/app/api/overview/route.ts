@@ -10,7 +10,11 @@ import type {
   SalesOverview,
   ScheduleOverview,
 } from '@/features/overview/types';
-import type { ImportSource, ImportSourceHealth } from '@/lib/import-health';
+import {
+  IMPORT_SOURCES,
+  type ImportSource,
+  type ImportSourceHealth,
+} from '@/lib/import-health';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +39,7 @@ const DOMAIN_MESSAGES: Record<DomainName, string> = {
   concession: 'Concession data unavailable',
   connections: 'Automatic import health unavailable',
 };
+const DOMAIN_TIMEOUT_MS = 8_000;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object'
@@ -92,14 +97,23 @@ async function fetchJson(
 ): Promise<unknown> {
   const url = new URL(pathname, request.url);
   const cookie = request.headers.get('cookie');
-  const response = await fetch(url, {
-    cache: 'no-store',
-    headers: cookie ? { cookie } : undefined,
-  });
-  if (!response.ok) {
-    throw new Error(`${url.pathname} returned HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`${url.pathname} timed out`));
+  }, DOMAIN_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      headers: cookie ? { cookie } : undefined,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${url.pathname} returned HTTP ${response.status}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
   }
-  return response.json();
 }
 
 function failed<T>(name: DomainName, reason: unknown): DomainResult<T> {
@@ -195,15 +209,11 @@ function normalizeInventory(value: unknown): InventoryOverview {
   };
 }
 
-function normalizeFlights(
-  value: unknown,
-  date: string,
-  airportClock: AirportClock,
-): FlightsOverview {
-  const rows = record(value)?.flights;
-  if (!Array.isArray(rows)) throw new Error('Flight response is malformed');
-
-  const flights = rows.flatMap((entry): OverviewFlight[] => {
+function normalizeFlightRows(
+  rows: unknown[],
+  allowSyntheticId = false,
+): OverviewFlight[] {
+  return rows.flatMap((entry, index): OverviewFlight[] => {
     const row = record(entry);
     const id = row?.id;
     const flightNumber = stringValue(row?.flight_num);
@@ -211,8 +221,14 @@ function normalizeFlights(
     const scheduledAt = timeOfDay(row?.scheduled_time);
     const direction = row?.flight_type;
     const estimatedPassengers = finiteNumber(row?.estimated_passengers);
+    const normalizedId =
+      typeof id === 'number' || typeof id === 'string'
+        ? id
+        : allowSyntheticId && flightNumber && scheduledAt
+          ? `${flightNumber}-${scheduledAt}-${index}`
+          : null;
     if (
-      (typeof id !== 'number' && typeof id !== 'string') ||
+      normalizedId === null ||
       !flightNumber ||
       !airline ||
       !scheduledAt ||
@@ -222,7 +238,7 @@ function normalizeFlights(
       return [];
     }
     return [{
-      id,
+      id: normalizedId,
       flightNumber,
       airline,
       scheduledAt,
@@ -230,14 +246,32 @@ function normalizeFlights(
       estimatedPassengers,
     }];
   });
+}
 
-  const upcomingFlights = flights.filter((flight) => {
+function upcomingFlightsForDate(
+  flights: OverviewFlight[],
+  date: string,
+  airportClock: AirportClock,
+) {
+  return flights.filter((flight) => {
     if (date > airportClock.date) return true;
     return (
       date === airportClock.date &&
       minutes(flight.scheduledAt) >= airportClock.minutes
     );
   });
+}
+
+function normalizeFlights(
+  value: unknown,
+  date: string,
+  airportClock: AirportClock,
+): FlightsOverview {
+  const rows = record(value)?.flights;
+  if (!Array.isArray(rows)) throw new Error('Flight response is malformed');
+
+  const flights = normalizeFlightRows(rows);
+  const upcomingFlights = upcomingFlightsForDate(flights, date, airportClock);
   const upcomingDepartures = upcomingFlights
     .filter((flight) => {
       return flight.direction === 'departure';
@@ -270,6 +304,8 @@ function normalizeShift(value: unknown): OverviewShift | null {
 function normalizeSchedule(
   value: unknown,
   flights: FlightsOverview | null,
+  date: string,
+  airportClock: AirportClock,
 ): ScheduleOverview {
   const root = record(value);
   if (!root || typeof root.exists !== 'boolean') {
@@ -281,7 +317,8 @@ function normalizeSchedule(
       coverageScore: null,
       staffOnDuty: null,
       shifts: [],
-      gaps: (flights?.flights ?? [])
+      gaps: flights
+        ? flights.flights
         .filter(
           (flight) =>
             flight.direction === 'departure' &&
@@ -292,7 +329,8 @@ function normalizeSchedule(
           flightNumber: flight.flightNumber,
           passengers: flight.estimatedPassengers,
           scheduledAt: flight.scheduledAt,
-        })),
+        }))
+        : null,
     };
   }
 
@@ -310,7 +348,17 @@ function normalizeSchedule(
     throw new Error('Schedule response is missing coverage');
   }
 
-  const gaps = (flights?.flights ?? [])
+  const embeddedFlights = Array.isArray(day.flights)
+    ? upcomingFlightsForDate(
+        normalizeFlightRows(day.flights, true),
+        date,
+        airportClock,
+      )
+    : null;
+  const evidenceFlights = flights?.flights ?? embeddedFlights;
+  const gaps = evidenceFlights === null
+    ? null
+    : evidenceFlights
     .filter(
       (flight) =>
         flight.direction === 'departure' &&
@@ -399,6 +447,9 @@ function normalizeConnections(value: unknown): ConnectionsOverview {
   ) {
     throw new Error('Connections response is malformed');
   }
+  if (root.sources.length !== IMPORT_SOURCES.length) {
+    throw new Error('Connections response must include every import source');
+  }
   const sources = root.sources.map((value): ImportSourceHealth => {
     const source = record(value);
     const status = source?.status;
@@ -412,11 +463,25 @@ function normalizeConnections(value: unknown): ConnectionsOverview {
         status !== 'stale' &&
         status !== 'failed' &&
         status !== 'never') ||
-      (lastAttemptAt !== null && typeof lastAttemptAt !== 'string') ||
-      (lastSuccessAt !== null && typeof lastSuccessAt !== 'string') ||
+      !isInstantOrNull(lastAttemptAt) ||
+      !isInstantOrNull(lastSuccessAt) ||
       (message !== null && typeof message !== 'string')
     ) {
       throw new Error('Connections source response is malformed');
+    }
+    if (
+      ((status === 'healthy' || status === 'stale') &&
+        (lastAttemptAt === null || lastSuccessAt === null)) ||
+      ((status === 'healthy' || status === 'stale') &&
+        lastAttemptAt !== lastSuccessAt) ||
+      (status === 'failed' && lastAttemptAt === null) ||
+      (status === 'never' &&
+        (lastAttemptAt !== null || lastSuccessAt !== null)) ||
+      (lastAttemptAt !== null &&
+        lastSuccessAt !== null &&
+        new Date(lastSuccessAt).getTime() > new Date(lastAttemptAt).getTime())
+    ) {
+      throw new Error('Connections source status is inconsistent');
     }
     return {
       source: source.source,
@@ -426,6 +491,20 @@ function normalizeConnections(value: unknown): ConnectionsOverview {
       message,
     };
   });
+  const receivedSources = new Set(sources.map((source) => source.source));
+  if (
+    receivedSources.size !== IMPORT_SOURCES.length ||
+    IMPORT_SOURCES.some((source) => !receivedSources.has(source))
+  ) {
+    throw new Error('Connections response has missing or duplicate sources');
+  }
+  const allHealthy = sources.every((source) => source.status === 'healthy');
+  if (
+    (overall === 'healthy' && !allHealthy) ||
+    (overall === 'attention' && allHealthy)
+  ) {
+    throw new Error('Connections overall status is inconsistent');
+  }
   return {
     overall,
     sources,
@@ -440,6 +519,15 @@ function normalizeConnections(value: unknown): ConnectionsOverview {
   };
 }
 
+function isInstantOrNull(value: unknown): value is string | null {
+  return value === null ||
+    (typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(
+        value,
+      ) &&
+      Number.isFinite(new Date(value).getTime()));
+}
+
 function sourceUpdatedAt(
   connections: ConnectionsOverview | null,
   source: ImportSource,
@@ -450,7 +538,9 @@ function sourceUpdatedAt(
 
 function latestTimestamp(values: Array<string | null>): string | null {
   return values.filter((value): value is string => typeof value === 'string')
-    .sort((a, b) => b.localeCompare(a))[0] ?? null;
+    .sort(
+      (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+    )[0] ?? null;
 }
 
 function withUpdatedAt<T>(
@@ -509,7 +599,7 @@ export async function GET(request: Request) {
   const schedule = normalize<ScheduleOverview>(
     'schedule',
     scheduleRaw,
-    (value) => normalizeSchedule(value, flights.data),
+    (value) => normalizeSchedule(value, flights.data, date, airportClock),
   );
   const concession = normalize<ConcessionOverview>(
     'concession',
@@ -526,9 +616,7 @@ export async function GET(request: Request) {
     ),
     inventory: withUpdatedAt(
       inventory,
-      sourceUpdatedAt(connectionData, 'inventory') ??
-        inventory.data?.snapshotDate ??
-        null,
+      sourceUpdatedAt(connectionData, 'inventory'),
     ),
     flights: withUpdatedAt(
       flights,
