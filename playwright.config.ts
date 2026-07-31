@@ -10,7 +10,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -- --port 3001',
     url: 'http://localhost:3001',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
     env: {
       AUTH_USERNAME: 'e2e-admin',
