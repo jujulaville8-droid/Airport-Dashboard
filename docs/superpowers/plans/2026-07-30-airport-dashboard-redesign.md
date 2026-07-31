@@ -429,7 +429,6 @@ git commit -m "fix: make database schema reproducible"
 - Create: `src/components/ui/ConfirmDialog.tsx`
 - Create: `src/components/ui/DetailDrawer.tsx`
 - Create: `src/components/ui/ui.test.tsx`
-- Delete after migration: `src/components/MetricCard.tsx`
 
 **Interfaces:**
 - Produces: `Button`, `Badge`, `LoadingState`, `EmptyState`, `ErrorState`, `FreshnessIndicator`, `PageHeader`, `Metric`, `Panel`, `ConfirmDialog`, `DetailDrawer`.
@@ -751,6 +750,7 @@ git commit -m "feat: add automatic import health center"
 - Create: `src/features/overview/ActionCard.tsx`
 - Create: `src/features/overview/overview.test.tsx`
 - Modify: `src/app/dashboard/page.tsx`
+- Delete after Overview migration: `src/components/MetricCard.tsx`
 
 **Interfaces:**
 - Produces: one `OverviewResponse` and `deriveActions(response)`.
