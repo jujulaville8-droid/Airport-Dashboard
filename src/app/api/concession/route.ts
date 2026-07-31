@@ -2,7 +2,6 @@ import { supabase } from '@/lib/db';
 import { NextRequest } from 'next/server';
 
 const MAG_ECD = 4198;           // Monthly MAG in ECD (exclusive of ABST, as billed)
-const THRESHOLD_USD = 22248;    // Net sales threshold in USD
 const PERCENTAGE_RATE = 0.10;   // 10% of net sales
 const EC_RATE = 2.7;            // USD to ECD conversion
 const CC_COMMISSION = 0.04;     // 4% credit card commission

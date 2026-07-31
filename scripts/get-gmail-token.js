@@ -5,9 +5,9 @@
 //   3. Open the printed URL in your browser and approve
 //   4. Copy the printed refresh token into GMAIL_REFRESH_TOKEN in .env.local
 
-const { google } = require('googleapis');
-const http = require('http');
-const url = require('url');
+import { google } from 'googleapis';
+import * as http from 'node:http';
+import * as url from 'node:url';
 
 const CLIENT_ID = process.env.GMAIL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
