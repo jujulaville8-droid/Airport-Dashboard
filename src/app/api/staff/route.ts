@@ -5,32 +5,64 @@ import { NextRequest } from 'next/server';
 const STAFF_ROLES = ['full-time', 'part-time', 'backup'] as const;
 type StaffRole = typeof STAFF_ROLES[number];
 
-// Fields callers are allowed to set via POST/PUT. is_active is managed via PUT only
-// (and still gated by allow-list); all other columns (id, created_at, etc.) are server-owned.
-const MUTABLE_FIELDS = [
-  'name',
-  'full_name',
-  'role',
-  'max_hours_per_day',
-  'min_hours_per_day',
-  'weekly_hour_target',
-  'days_off_per_week',
-  'available_start',
-  'available_end',
-  'is_active',
-] as const;
-type MutableField = typeof MUTABLE_FIELDS[number];
-
-function pickAllowed(body: Record<string, unknown>): Partial<Record<MutableField, unknown>> {
-  const out: Partial<Record<MutableField, unknown>> = {};
-  for (const key of MUTABLE_FIELDS) {
-    if (key in body) out[key] = body[key];
-  }
-  return out;
-}
-
 function isStaffRole(v: unknown): v is StaffRole {
   return typeof v === 'string' && (STAFF_ROLES as readonly string[]).includes(v);
+}
+
+function parseStaffUpdates(
+  body: Record<string, unknown>,
+): { value: TablesUpdate<'staff_members'> } | { error: string } {
+  const value: TablesUpdate<'staff_members'> = {};
+
+  for (const key of ['name', 'full_name', 'available_start', 'available_end'] as const) {
+    if (!(key in body)) continue;
+    const field = body[key];
+    if (typeof field !== 'string' || !field.trim()) {
+      return { error: `${key} must be a non-empty string` };
+    }
+    value[key] = field;
+  }
+
+  if ('role' in body) {
+    if (!isStaffRole(body.role)) {
+      return { error: `role must be one of: ${STAFF_ROLES.join(', ')}` };
+    }
+    value.role = body.role;
+  }
+
+  for (const key of ['max_hours_per_day', 'min_hours_per_day'] as const) {
+    if (!(key in body)) continue;
+    const field = body[key];
+    if (typeof field !== 'number' || !Number.isFinite(field)) {
+      return { error: `${key} must be a finite number` };
+    }
+    value[key] = field;
+  }
+
+  if ('weekly_hour_target' in body) {
+    const field = body.weekly_hour_target;
+    if (field !== null && (typeof field !== 'number' || !Number.isFinite(field))) {
+      return { error: 'weekly_hour_target must be a finite number or null' };
+    }
+    value.weekly_hour_target = field;
+  }
+
+  if ('days_off_per_week' in body) {
+    const field = body.days_off_per_week;
+    if (field !== null && (typeof field !== 'number' || !Number.isInteger(field))) {
+      return { error: 'days_off_per_week must be an integer or null' };
+    }
+    value.days_off_per_week = field;
+  }
+
+  if ('is_active' in body) {
+    if (typeof body.is_active !== 'boolean') {
+      return { error: 'is_active must be a boolean' };
+    }
+    value.is_active = body.is_active;
+  }
+
+  return { value };
 }
 
 // GET all staff
@@ -54,19 +86,21 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    const fields = pickAllowed(body);
+    const parsed = parseStaffUpdates(body);
+    if ('error' in parsed) {
+      return Response.json({ error: parsed.error }, { status: 400 });
+    }
+    const fields = parsed.value;
 
-    if (!fields.name || !fields.full_name || !fields.role) {
+    if (
+      typeof fields.name !== 'string'
+      || typeof fields.full_name !== 'string'
+      || !isStaffRole(fields.role)
+    ) {
       return Response.json({ error: 'name, full_name, and role are required' }, { status: 400 });
     }
-    if (!isStaffRole(fields.role)) {
-      return Response.json(
-        { error: `role must be one of: ${STAFF_ROLES.join(', ')}` },
-        { status: 400 }
-      );
-    }
 
-    const staffMember = {
+    const staffMember: TablesInsert<'staff_members'> = {
       name: fields.name,
       full_name: fields.full_name,
       role: fields.role,
@@ -77,7 +111,7 @@ export async function POST(request: NextRequest) {
       available_start: fields.available_start ?? '09:00',
       available_end: fields.available_end ?? '20:00',
       is_active: true,
-    } as TablesInsert<'staff_members'>;
+    };
 
     const { data, error } = await supabase
       .from('staff_members')
@@ -103,21 +137,18 @@ export async function PUT(request: NextRequest) {
       return Response.json({ error: 'id is required' }, { status: 400 });
     }
 
-    const updates = pickAllowed(body);
+    const parsed = parseStaffUpdates(body);
+    if ('error' in parsed) {
+      return Response.json({ error: parsed.error }, { status: 400 });
+    }
+    const updates = parsed.value;
     if (Object.keys(updates).length === 0) {
       return Response.json({ error: 'no updatable fields provided' }, { status: 400 });
     }
 
-    if ('role' in updates && !isStaffRole(updates.role)) {
-      return Response.json(
-        { error: `role must be one of: ${STAFF_ROLES.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
     const { data, error } = await supabase
       .from('staff_members')
-      .update(updates as TablesUpdate<'staff_members'>)
+      .update(updates)
       .eq('id', id)
       .select()
       .single();

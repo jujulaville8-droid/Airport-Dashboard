@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/db';
-import type { TablesInsert } from '@/lib/database.types';
+import type { TablesInsert, TablesUpdate } from '@/lib/database.types';
 import { NextRequest } from 'next/server';
 
 /**
@@ -11,21 +11,36 @@ import { NextRequest } from 'next/server';
  * Field allow-list pattern (from staff/route.ts) prevents mass-assignment.
  */
 
-const MUTABLE_FIELDS = [
-  'min_stock',
-  'reorder_point',
-  'max_stock',
-  'lead_time_days',
-  'notes',
-] as const;
-type MutableField = typeof MUTABLE_FIELDS[number];
+function parseRuleUpdates(
+  body: Record<string, unknown>,
+): { value: TablesUpdate<'reorder_rules'> } | { error: string } {
+  const value: TablesUpdate<'reorder_rules'> = {};
 
-function pickAllowed(body: Record<string, unknown>): Partial<Record<MutableField, unknown>> {
-  const out: Partial<Record<MutableField, unknown>> = {};
-  for (const key of MUTABLE_FIELDS) {
-    if (key in body) out[key] = body[key];
+  for (const key of ['min_stock', 'reorder_point', 'max_stock', 'lead_time_days'] as const) {
+    if (!(key in body)) continue;
+    const field = body[key];
+    if (field === null || field === '') {
+      value[key] = null;
+      continue;
+    }
+    if (typeof field !== 'number' && typeof field !== 'string') {
+      return { error: `${key} must be a non-negative number` };
+    }
+    const number = Number(field);
+    if (!Number.isFinite(number) || number < 0) {
+      return { error: `${key} must be a non-negative number` };
+    }
+    value[key] = Math.floor(number);
   }
-  return out;
+
+  if ('notes' in body) {
+    if (body.notes !== null && typeof body.notes !== 'string') {
+      return { error: 'notes must be a string or null' };
+    }
+    value.notes = body.notes;
+  }
+
+  return { value };
 }
 
 export async function GET() {
@@ -51,22 +66,11 @@ export async function PUT(request: NextRequest) {
       return Response.json({ error: 'item_no required' }, { status: 400 });
     }
 
-    const updates = pickAllowed(body);
-    // Coerce and validate numeric fields
-    for (const key of ['min_stock', 'reorder_point', 'max_stock', 'lead_time_days'] as const) {
-      if (key in updates) {
-        const v = updates[key];
-        if (v === null || v === '') {
-          updates[key] = null;
-        } else {
-          const n = Number(v);
-          if (!Number.isFinite(n) || n < 0) {
-            return Response.json({ error: `${key} must be a non-negative number` }, { status: 400 });
-          }
-          updates[key] = Math.floor(n);
-        }
-      }
+    const parsed = parseRuleUpdates(body);
+    if ('error' in parsed) {
+      return Response.json({ error: parsed.error }, { status: 400 });
     }
+    const updates = parsed.value;
 
     // Confirm the item exists in item_master (FK would catch it but we prefer a clean 404)
     const { data: master, error: masterErr } = await supabase
@@ -79,11 +83,11 @@ export async function PUT(request: NextRequest) {
       return Response.json({ error: 'Item not found in catalog' }, { status: 404 });
     }
 
-    const rule = {
+    const rule: TablesInsert<'reorder_rules'> = {
       item_no: itemNo,
       ...updates,
       updated_at: new Date().toISOString(),
-    } as TablesInsert<'reorder_rules'>;
+    };
 
     const { data, error } = await supabase
       .from('reorder_rules')

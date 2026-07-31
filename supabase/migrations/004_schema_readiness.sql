@@ -7,7 +7,15 @@ ALTER TABLE sales_transactions
 
 UPDATE sales_transactions
 SET ticket_count = CASE
-  WHEN cust_no ~ '^[0-9]+$' THEN cust_no::INTEGER
+  WHEN cust_no ~ '^[0-9]+$'
+    AND (
+      length(ltrim(cust_no, '0')) < 10
+      OR (
+        length(ltrim(cust_no, '0')) = 10
+        AND ltrim(cust_no, '0') <= '2147483647'
+      )
+    )
+  THEN cust_no::INTEGER
   ELSE 0
 END
 WHERE ticket_count IS NULL;

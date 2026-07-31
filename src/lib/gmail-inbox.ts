@@ -431,23 +431,19 @@ async function logRoutedImport(
         ? 'manual'
         : 'counterpoint';
 
-  try {
-    await logImport({
-      source_type: sourceType,
-      file_name: fileName,
-      total_records: routed.records,
-      successful_records: routed.ok ? routed.records : 0,
-      failed_records: routed.ok ? 0 : routed.records,
-      error_messages: routed.ok ? null : { errors: [routed.detail] },
-      reconciliation_status: routed.ok ? 'complete' : 'failed',
-      source,
-      status: routed.ok ? 'success' : 'failed',
-      message: routed.ok ? null : routed.detail,
-      attempted_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('[gmail-inbox] failed to write routed import log:', error);
-  }
+  await logImport({
+    source_type: sourceType,
+    file_name: fileName,
+    total_records: routed.records,
+    successful_records: routed.ok ? routed.records : 0,
+    failed_records: routed.ok ? 0 : routed.records,
+    error_messages: routed.ok ? null : { errors: [routed.detail] },
+    reconciliation_status: routed.ok ? 'complete' : 'failed',
+    source,
+    status: routed.ok ? 'success' : 'failed',
+    message: routed.ok ? null : routed.detail,
+    attempted_at: new Date().toISOString(),
+  });
 }
 
 // ---------- Main scan ----------
@@ -512,28 +508,9 @@ export async function scanInbox(): Promise<InboxScanResult> {
       const receivedDate = full.data.internalDate
         ? new Date(Number(full.data.internalDate)).toISOString()
         : undefined;
+      let capacityResult: Awaited<ReturnType<typeof importCarrierCapacityEmail>>;
       try {
-        const r = await importCarrierCapacityEmail(subject, body, receivedDate, 'email');
-        const detail = r.success
-          ? `capacity ${r.flight_date}: ${r.flightsMatched}/${r.flightsParsed} flights matched` +
-            (r.flightsUnmatched > 0 ? ` (${r.flightsUnmatched} unmatched: ${r.unmatchedFlights.slice(0, 3).join(', ')})` : '')
-          : `capacity failed: ${r.errors.join('; ') || r.warnings.join('; ') || 'no matches'}`;
-        await logRoutedImport(
-          'carrier_capacity',
-          `carrier-capacity:${subject}`,
-          { ok: r.success, detail, records: r.flightsParsed },
-        );
-        await applyLabel(gmail, messageId, r.success ? labels.imported : labels.failed, true);
-        if (r.success) {
-          result.imported += 1;
-        } else {
-          result.failed += 1;
-        }
-        result.details.push({
-          messageId, from, subject,
-          attachment: '(body only)', type: 'carrier_capacity',
-          status: r.success ? 'imported' : 'failed', reason: detail,
-        });
+        capacityResult = await importCarrierCapacityEmail(subject, body, receivedDate, 'email');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         await logRoutedImport(
@@ -548,7 +525,36 @@ export async function scanInbox(): Promise<InboxScanResult> {
           attachment: '(body only)', type: 'carrier_capacity',
           status: 'failed', reason: msg,
         });
+        continue;
       }
+
+      const detail = capacityResult.success
+        ? `capacity ${capacityResult.flight_date}: ${capacityResult.flightsMatched}/${capacityResult.flightsParsed} flights matched` +
+          (capacityResult.flightsUnmatched > 0
+            ? ` (${capacityResult.flightsUnmatched} unmatched: ${capacityResult.unmatchedFlights.slice(0, 3).join(', ')})`
+            : '')
+        : `capacity failed: ${capacityResult.errors.join('; ') || capacityResult.warnings.join('; ') || 'no matches'}`;
+      await logRoutedImport(
+        'carrier_capacity',
+        `carrier-capacity:${subject}`,
+        { ok: capacityResult.success, detail, records: capacityResult.flightsParsed },
+      );
+      await applyLabel(
+        gmail,
+        messageId,
+        capacityResult.success ? labels.imported : labels.failed,
+        true,
+      );
+      if (capacityResult.success) {
+        result.imported += 1;
+      } else {
+        result.failed += 1;
+      }
+      result.details.push({
+        messageId, from, subject,
+        attachment: '(body only)', type: 'carrier_capacity',
+        status: capacityResult.success ? 'imported' : 'failed', reason: detail,
+      });
       continue;
     }
 
@@ -605,26 +611,10 @@ export async function scanInbox(): Promise<InboxScanResult> {
         continue;
       }
 
+      let routed: Awaited<ReturnType<typeof routeAttachment>>;
       try {
         const buffer = await downloadAttachment(gmail, messageId, att.attachmentId);
-        const routed = await routeAttachment(type, buffer, att.filename, subject);
-        await logRoutedImport(type, att.filename, routed);
-        if (routed.ok) {
-          result.imported += 1;
-          result.details.push({
-            messageId, from, subject,
-            attachment: att.filename, type,
-            status: 'imported', reason: routed.detail,
-          });
-        } else {
-          anyFailed = true;
-          result.failed += 1;
-          result.details.push({
-            messageId, from, subject,
-            attachment: att.filename, type,
-            status: 'failed', reason: routed.detail,
-          });
-        }
+        routed = await routeAttachment(type, buffer, att.filename, subject);
       } catch (err) {
         anyFailed = true;
         result.failed += 1;
@@ -640,6 +630,25 @@ export async function scanInbox(): Promise<InboxScanResult> {
           status: 'failed', reason: msg,
         });
         console.error('[gmail-inbox] attachment error:', messageId, att.filename, msg);
+        continue;
+      }
+
+      await logRoutedImport(type, att.filename, routed);
+      if (routed.ok) {
+        result.imported += 1;
+        result.details.push({
+          messageId, from, subject,
+          attachment: att.filename, type,
+          status: 'imported', reason: routed.detail,
+        });
+      } else {
+        anyFailed = true;
+        result.failed += 1;
+        result.details.push({
+          messageId, from, subject,
+          attachment: att.filename, type,
+          status: 'failed', reason: routed.detail,
+        });
       }
     }
 
