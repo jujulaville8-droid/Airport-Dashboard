@@ -52,4 +52,5 @@ direction-a-*.jpg
 /.agents/
 /.claude/
 /.superpowers/
+/.worktrees/
 skills-lock.json
