@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import anime from 'animejs';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Receipt,
   WarningCircle,
@@ -31,9 +30,6 @@ interface ConcessionData {
 }
 
 export default function ConcessionPage() {
-  const headerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-
   const [selectedMonth, setSelectedMonth] = useState('');
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [ccSales, setCCSales] = useState('');
@@ -139,22 +135,6 @@ export default function ConcessionPage() {
     }
   };
 
-  useEffect(() => {
-    anime({ targets: headerRef.current, translateY: [-20, 0], opacity: [0, 1], easing: 'easeOutExpo', duration: 800 });
-  }, []);
-
-  const animatedRef = useRef(false);
-  useEffect(() => {
-    if (animatedRef.current || !data || !contentRef.current) return;
-    animatedRef.current = true;
-    anime({
-      targets: contentRef.current.querySelectorAll('.anime-section'),
-      translateY: [30, 0], opacity: [0, 1],
-      delay: anime.stagger(150),
-      easing: 'easeOutExpo', duration: 800,
-    });
-  }, [data]);
-
   const formatMonth = (m: string) => {
     const [y, mo] = m.split('-');
     return new Date(parseInt(y), parseInt(mo) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -170,11 +150,12 @@ export default function ConcessionPage() {
   const progressPct = data ? Math.min((data.grossSalesUSD / threshold) * 100, 100) : 0;
 
   return (
-    <div className="px-6 md:px-10 lg:px-14">
-      <div ref={headerRef} className="opacity-0 flex flex-col sm:flex-row sm:items-end justify-between pt-10 md:pt-14 pb-8 md:pb-12 gap-6">
-        <div className="flex flex-col gap-1">
-          <h2 className="font-serif text-[32px] md:text-[40px] leading-tight text-brand-black tracking-tight">Concession Calculator</h2>
-          <p className="text-sm font-medium text-brand-wood/80">ABAA rent calculation — MAG vs percentage</p>
+    <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-5 border-b border-line pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-2">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">Airport tenancy · ABAA</p>
+          <h1 className="font-serif text-3xl leading-tight text-ink sm:text-4xl">Concession rent</h1>
+          <p className="max-w-xl text-sm text-muted">A clear monthly position against the minimum annual guarantee, ready for the airport calculator.</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && <CircleNotch size={16} className="animate-spin text-brand-gold" />}
@@ -182,7 +163,8 @@ export default function ConcessionPage() {
             <select
               value={selectedMonth}
               onChange={e => setSelectedMonth(e.target.value)}
-              className="text-sm border border-brand-wood/20 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-brand-gold cursor-pointer"
+              aria-label="Reporting month"
+              className="min-h-10 rounded-md border border-line bg-surface px-3 text-sm font-medium text-ink shadow-sm"
             >
               {availableMonths.map(m => (
                 <option key={m} value={m}>{formatMonth(m)}</option>
@@ -190,17 +172,18 @@ export default function ConcessionPage() {
             </select>
           ) : (
             <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-              className="text-sm border border-brand-wood/20 rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-brand-gold" />
+              aria-label="Reporting month"
+              className="min-h-10 rounded-md border border-line bg-surface px-3 text-sm font-medium text-ink shadow-sm" />
           )}
         </div>
       </div>
 
-      <div ref={contentRef} className="flex flex-col gap-8 lg:gap-10 max-w-[1200px] mx-auto pb-10">
+      <div className="mt-6 flex flex-col gap-6 pb-8">
 
         {noSalesData && (
-          <div className="bg-white rounded-[20px] border border-brand-wood/15 p-12 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)] flex flex-col items-center text-center gap-4">
-            <Receipt size={48} className="text-brand-wood/30" />
-            <p className="text-brand-wood/60 text-sm max-w-md">
+          <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed border-line bg-surface p-12 text-center">
+            <Receipt size={40} className="text-muted" />
+            <p className="max-w-md text-sm text-muted">
               No sales data for {formatMonth(selectedMonth)}. Upload a Counterpoint sales report on the Sales page first.
             </p>
           </div>
@@ -209,16 +192,16 @@ export default function ConcessionPage() {
         {data && (
           <>
             {/* Threshold Progress */}
-            <div className="anime-section opacity-0 bg-white rounded-[20px] border border-brand-wood/15 p-6 lg:p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-serif text-[22px] text-brand-black tracking-tight">{formatMonth(selectedMonth)}</h3>
+            <div className="rounded-lg border border-line bg-surface p-5 shadow-sm sm:p-6">
+              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div><p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Rental position</p><h2 className="mt-1 text-lg font-semibold text-ink">{formatMonth(selectedMonth)}</h2></div>
                 <div className="flex items-center gap-2">
                   {data.exceedsThreshold ? (
-                    <span className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-200">
+                    <span className="flex items-center gap-1 rounded-full border border-danger/25 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger">
                       <WarningCircle size={14} /> Percentage rent exceeds MAG — additional due
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-3 py-1 rounded-full border border-green-200">
+                    <span className="flex items-center gap-1 rounded-full border border-positive/25 bg-positive/10 px-3 py-1.5 text-xs font-semibold text-positive">
                       <CheckCircle size={14} /> Percentage rent below MAG — $0 additional
                     </span>
                   )}
@@ -226,33 +209,33 @@ export default function ConcessionPage() {
               </div>
 
               {/* Progress bar to threshold */}
-              <div className="mb-2 flex items-center justify-between text-xs text-brand-wood/60">
+              <div className="mb-2 flex items-center justify-between text-xs text-muted">
                 <span>$0</span>
-                <span className="font-medium text-brand-black">MAG break-even: ${threshold.toLocaleString()} USD</span>
+                <span className="font-medium text-ink">MAG break-even: ${threshold.toLocaleString()} USD</span>
               </div>
-              <div className="w-full h-4 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(71,85,105,0.1)' }}>
+              <div className="h-3 w-full overflow-hidden rounded-full bg-app-bg">
                 <div className="h-full rounded-full transition-all duration-1000" style={{
                   width: `${progressPct}%`,
                   backgroundColor: data.exceedsThreshold ? 'rgba(220,38,38,0.6)' : 'rgba(200,169,110,0.5)',
                 }} />
               </div>
-              <div className="mt-2 text-sm text-brand-wood/70">
-                Net sales: <span className="font-semibold text-brand-black">${fmt(data.grossSalesUSD)} USD</span>
+              <div className="mt-3 text-sm text-muted">
+                Net sales: <span className="font-semibold text-ink">${fmt(data.grossSalesUSD)} USD</span>
                 {!data.exceedsThreshold && <span> — ${fmt(threshold - data.grossSalesUSD)} below MAG break-even</span>}
               </div>
             </div>
 
             {/* You Owe */}
-            <div className="anime-section opacity-0 bg-gradient-to-br from-white to-brand-gold/[0.03] rounded-[20px] border border-brand-wood/15 border-l-[4px] border-l-brand-gold p-6 lg:p-8 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
+            <div className="rounded-lg border border-accent/40 bg-[linear-gradient(110deg,rgba(244,180,31,0.16),rgba(255,255,255,0.92)_55%)] p-5 shadow-sm sm:p-6">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                 <div className="flex-1">
-                  <p className="text-[11px] font-medium text-brand-wood/70 uppercase tracking-wide mb-2">Additional Payable — {formatMonth(selectedMonth)}</p>
+                  <p className="mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Additional payment due · {formatMonth(selectedMonth)}</p>
                   <div className="flex items-baseline gap-4">
-                    <h3 className="font-serif text-4xl md:text-5xl text-brand-black">${fmt(data.concessionPayableECD)}</h3>
-                    <span className="text-lg text-brand-wood/60">ECD</span>
+                    <h2 className="font-mono text-4xl font-semibold tracking-tight text-ink md:text-5xl">${fmt(data.concessionPayableECD)}</h2>
+                    <span className="text-lg text-muted">ECD</span>
                   </div>
-                  <p className="text-sm text-brand-wood/60 mt-2">${fmt(data.concessionPayableUSD)} USD</p>
-                  <p className="text-xs text-brand-wood/50 mt-1">
+                  <p className="mt-2 text-sm text-muted">${fmt(data.concessionPayableUSD)} USD</p>
+                  <p className="mt-1 text-xs text-muted">
                     {data.exceedsThreshold
                       ? `10% of net sales ($${fmt(data.rentPercentageECD)} ECD) − MAG ($${fmt(data.magECD)} ECD)`
                       : `MAG ($${fmt(data.magECD)} ECD) exceeds 10% of net sales ($${fmt(data.rentPercentageECD)} ECD) — nothing owed on top of MAG this period`
@@ -264,21 +247,21 @@ export default function ConcessionPage() {
                     <button
                       onClick={handleExport}
                       disabled={exporting}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-brand-gold text-white rounded-lg text-sm font-semibold cursor-pointer hover:bg-brand-gold/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      className="flex min-h-10 items-center gap-2 rounded-md bg-nav px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {exporting
                         ? <CircleNotch size={16} className="animate-spin" />
                         : <DownloadSimple size={16} weight="bold" />}
-                      {exporting ? 'Generating…' : 'Export ABAA Calculator'}
+                      {exporting ? 'Generating…' : 'Export airport calculator'}
                     </button>
-                    <p className="text-[10px] text-brand-wood/50 text-right max-w-[200px]">
+                    <p className="max-w-[220px] text-right text-[11px] text-muted">
                       Official airport authority spreadsheet with your numbers filled in
                     </p>
                   </div>
                 )}
               </div>
               {exportError && (
-                <div className="mt-4 px-3 py-2 rounded-md bg-red-50 border border-red-200 text-xs text-red-800 flex items-center justify-between">
+                <div className="mt-4 flex items-center justify-between rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-xs text-danger">
                   <span>{exportError}</span>
                   <button
                     onClick={() => setExportError(null)}
@@ -292,32 +275,31 @@ export default function ConcessionPage() {
             </div>
 
             {/* CC / Cash Breakdown */}
-            <div className="anime-section opacity-0 flex flex-col gap-4">
-              <h3 className="font-serif text-[22px] text-brand-black tracking-tight">Credit Card / Cash Split</h3>
-              <div className="bg-white rounded-[20px] border border-brand-wood/15 p-6 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
-                <p className="text-xs text-brand-wood/50 mb-4">Enter CC and cash amounts to calculate net sales after 4% CC commission. Leave blank to use gross total as cash.</p>
+            <div className="rounded-lg border border-line bg-surface p-5 shadow-sm sm:p-6">
+              <h2 className="text-lg font-semibold text-ink">Enter payment mix</h2>
+              <p className="mt-1 text-sm text-muted">Optional. Card sales deduct the 4% processing commission. Leave both blank to treat the imported gross total as cash.</p>
+              <div className="mt-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] text-brand-wood/60 uppercase font-medium">Credit Card Sales (USD)</label>
+                    <label className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Credit Card Sales (USD)</label>
                     <input type="number" value={ccSales} onChange={e => setCCSales(e.target.value)}
                       placeholder="0.00"
-                      className="text-sm border border-brand-wood/20 rounded-lg px-3 py-2.5 bg-white focus:outline-none focus:border-brand-gold w-full mt-1" />
+                      className="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2.5 text-sm text-ink" />
                   </div>
                   <div>
-                    <label className="text-[10px] text-brand-wood/60 uppercase font-medium">Cash Sales (USD)</label>
+                    <label className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Cash Sales (USD)</label>
                     <input type="number" value={cashSales} onChange={e => setCashSales(e.target.value)}
                       placeholder="0.00"
-                      className="text-sm border border-brand-wood/20 rounded-lg px-3 py-2.5 bg-white focus:outline-none focus:border-brand-gold w-full mt-1" />
+                      className="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2.5 text-sm text-ink" />
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Calculation Breakdown */}
-            <div className="anime-section opacity-0 flex flex-col gap-4">
-              <h3 className="font-serif text-[22px] text-brand-black tracking-tight">Calculation Breakdown</h3>
-              <div className="bg-white rounded-[20px] border border-brand-wood/15 p-6 shadow-[0_12px_40px_-12px_rgba(15,23,42,0.06)]">
-                <table className="w-full text-sm">
+            <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
+              <div className="border-b border-line px-5 py-4 sm:px-6"><h2 className="text-lg font-semibold text-ink">Calculation ledger</h2><p className="mt-1 text-sm text-muted">The values used to prepare the rent position.</p></div>
+              <div className="overflow-x-auto px-5 sm:px-6"><table className="w-full min-w-[560px] text-sm">
                   <tbody>
                     <tr className="border-b border-brand-wood/10">
                       <td className="py-3 text-brand-wood/70">Total Gross Sales</td>
