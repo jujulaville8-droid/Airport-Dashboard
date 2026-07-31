@@ -6,7 +6,7 @@ test('signs in and preserves a responsive dashboard shell', async ({ page }) => 
   await page.getByLabel('Password').fill('e2e-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByRole('link', { name: /sales/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: /sales/i }).first()).toBeVisible();
   for (const path of ['/dashboard/sales', '/dashboard/inventory', '/dashboard/flights', '/dashboard/schedules', '/dashboard/concession', '/dashboard/connections']) {
     await page.goto(path);
     await expect(page.locator('#dashboard-content')).toBeVisible();
