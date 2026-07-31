@@ -65,6 +65,32 @@ describe('fetchAirportDepartures', () => {
 });
 
 describe('normalizeDepartures', () => {
+  it('accepts the space-separated local timestamp returned by AeroDataBox', () => {
+    const normalized = normalizeDepartures([
+      {
+        number: 'AA 1136',
+        status: 'Expected',
+        codeshareStatus: 'IsOperator',
+        isCargo: false,
+        departure: {
+          airport: { name: 'V.C. Bird International', iata: 'ANU', icao: 'TAPA' },
+          scheduledTime: {
+            utc: '2026-07-27T13:00:00Z',
+            local: '2026-07-27 09:00-04:00',
+          },
+        },
+        arrival: {
+          airport: { name: 'Miami International', iata: 'MIA', icao: 'KMIA' },
+        },
+        aircraft: { model: 'Boeing 737-800' },
+        airline: { name: 'American Airlines', iata: 'AA', icao: 'AAL' },
+      },
+    ]);
+
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]?.scheduled_time).toBe('2026-07-27T09:00:00');
+  });
+
   it('maps operating departures to the existing flight_data contract', () => {
     const normalized = normalizeDepartures([
       {

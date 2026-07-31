@@ -203,10 +203,13 @@ function normalizeFlightNumber(value: unknown): string | undefined {
 
 function normalizeLocalTimestamp(value: unknown): string | undefined {
   const timestamp = stringValue(value);
-  if (!timestamp || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timestamp)) {
+  const match = timestamp?.match(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/,
+  );
+  if (!match) {
     return undefined;
   }
-  const localMinute = timestamp.slice(0, 16);
+  const localMinute = `${match[1]}T${match[2]}`;
   const parsed = new Date(`${localMinute}:00.000Z`);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return `${localMinute}:00`;
