@@ -51,4 +51,5 @@ direction-a-*.jpg
 # local-only: Claude Code skills cache, agent scratch
 /.agents/
 /.claude/
+/.superpowers/
 skills-lock.json
