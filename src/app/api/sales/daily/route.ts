@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const { data: windowRows, error: windowErr } = await supabase
       .from('sales_transactions')
-      .select('tkt_dt, tot_amt, cust_no, disc_amt, hourly_breakdown')
+      .select('tkt_dt, tot_amt, ticket_count, disc_amt, hourly_breakdown')
       .gte('tkt_dt', windowStart + 'T00:00:00')
       .lte('tkt_dt', windowEnd + 'T23:59:59');
     if (windowErr) throw windowErr;
@@ -36,8 +36,7 @@ export async function GET(request: NextRequest) {
       const ymd = (row.tkt_dt as string).substring(0, 10);
       const bucket = byDate.get(ymd) ?? { sales: 0, tickets: 0, discount: 0, hourly: null };
       bucket.sales += Number(row.tot_amt);
-      const ticketNum = parseInt(row.cust_no as string, 10);
-      bucket.tickets += Number.isFinite(ticketNum) ? ticketNum : 0;
+      bucket.tickets += row.ticket_count ?? 0;
       bucket.discount += Number(row.disc_amt);
       if (row.hourly_breakdown) bucket.hourly = row.hourly_breakdown;
       byDate.set(ymd, bucket);

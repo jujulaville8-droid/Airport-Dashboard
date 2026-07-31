@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { Database, TablesInsert } from './database.types';
 
 /**
  * Service-role Supabase client for server-side operations (bypasses RLS).
@@ -13,9 +14,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
  * on the Node server, where env vars ARE present, so this proxy is
  * transparent to consumers.
  */
-let _client: SupabaseClient | null = null;
+let _client: SupabaseClient<Database> | null = null;
 
-function getClient(): SupabaseClient {
+function getClient(): SupabaseClient<Database> {
   if (_client) return _client;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,13 +25,13 @@ function getClient(): SupabaseClient {
       'Supabase env vars missing at runtime. Expected NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
     );
   }
-  _client = createClient(supabaseUrl, supabaseServiceKey);
+  _client = createClient<Database>(supabaseUrl, supabaseServiceKey);
   return _client;
 }
 
 // Proxy forwards every property access to the lazily-constructed client.
 // Consumers keep using `supabase.from('...')` exactly as before.
-export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+export const supabase: SupabaseClient<Database> = new Proxy({} as SupabaseClient<Database>, {
   get(_target, prop, receiver) {
     const client = getClient();
     const value = Reflect.get(client, prop, receiver);
@@ -61,15 +62,14 @@ export async function getDailySalesSummary(date: string) {
 
   const { data, error } = await supabase
     .from('sales_transactions')
-    .select('tot_amt, disc_amt, tax_amt, pmt_cod, cust_no')
+    .select('tot_amt, disc_amt, tax_amt, pmt_cod, ticket_count')
     .gte('tkt_dt', startOfDay)
     .lte('tkt_dt', endOfDay);
 
   if (error) throw error;
 
   const totalSales = data.reduce((sum, t) => sum + Number(t.tot_amt), 0);
-  // cust_no field stores the ticket count for the day (per import format)
-  const totalTransactions = data.reduce((sum, t) => sum + (parseInt(t.cust_no as string) || 0), 0);
+  const totalTransactions = data.reduce((sum, row) => sum + (row.ticket_count ?? 0), 0);
   const avgTransaction = totalTransactions > 0 ? totalSales / totalTransactions : 0;
 
   return {
@@ -118,7 +118,7 @@ export async function getFlightDataForMonth(scheduleMonth: string) {
   return data;
 }
 
-export async function storeFlightData(flights: Record<string, unknown>[]) {
+export async function storeFlightData(flights: TablesInsert<'flight_data'>[]) {
   const { error } = await supabase
     .from('flight_data')
     .upsert(flights, { onConflict: 'flight_num,flight_date,flight_type' });
@@ -284,7 +284,7 @@ export async function deleteFlightMonth(scheduleMonth: string) {
 
 // --- Schedules ---
 
-export async function storeSchedule(scheduleRecords: Record<string, unknown>[]) {
+export async function storeSchedule(scheduleRecords: TablesInsert<'staff_schedules'>[]) {
   const { error } = await supabase
     .from('staff_schedules')
     .insert(scheduleRecords);
@@ -305,7 +305,7 @@ export async function getSchedule(date: string) {
 
 // --- AI Analysis ---
 
-export async function storeAIAnalysis(analysis: Record<string, unknown>) {
+export async function storeAIAnalysis(analysis: TablesInsert<'ai_analysis_results'>) {
   const { error } = await supabase
     .from('ai_analysis_results')
     .insert(analysis);
@@ -328,7 +328,7 @@ export async function getLatestAnalysis(type: string) {
 
 // --- Import Logs ---
 
-export async function logImport(log: Record<string, unknown>) {
+export async function logImport(log: TablesInsert<'import_logs'>) {
   const { error } = await supabase
     .from('import_logs')
     .insert(log);

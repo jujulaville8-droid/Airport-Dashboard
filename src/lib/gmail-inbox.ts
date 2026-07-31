@@ -5,6 +5,7 @@ import { importInventorySnapshot } from './counterpoint-inventory';
 import { importFlightSchedule } from './flight-schedule';
 import { importCarrierCapacityEmail } from './carrier-capacity-importer';
 import { logImport } from './db';
+import type { ImportSource } from './import-health';
 
 /**
  * Gmail inbox watcher — auto-ingests Counterpoint + airport reports.
@@ -40,6 +41,24 @@ type AttachmentType =
   | 'flight_schedule'
   | 'carrier_capacity'   // body-only import, no attachment
   | 'unknown';
+
+export function importSourceForAttachment(type: AttachmentType): ImportSource | null {
+  switch (type) {
+    case 'sales_monthly':
+    case 'sales_daily':
+      return 'sales';
+    case 'item_sales':
+      return 'item_sales';
+    case 'inventory_snapshot':
+      return 'inventory';
+    case 'flight_schedule':
+      return 'flight_schedule';
+    case 'carrier_capacity':
+      return 'passenger_summary';
+    case 'unknown':
+      return null;
+  }
+}
 
 export interface InboxScanResult {
   scanned: number;
@@ -330,7 +349,7 @@ async function routeAttachment(
   buffer: Buffer,
   fileName: string,
   subject: string
-): Promise<{ ok: boolean; detail: string }> {
+): Promise<{ ok: boolean; detail: string; records: number }> {
   switch (type) {
     case 'sales_monthly': {
       const r = await importSalesReport(buffer, fileName);
@@ -339,6 +358,7 @@ async function routeAttachment(
         detail: r.success
           ? `monthly sales: ${r.totalDays} days, $${r.totalSales.toFixed(2)}`
           : `monthly sales failed: ${r.errors.join('; ')}`,
+        records: r.totalDays,
       };
     }
     case 'sales_daily': {
@@ -348,6 +368,7 @@ async function routeAttachment(
         detail: r.success
           ? `daily sales ${r.date}: $${r.sales.toFixed(2)}, ${r.tickets} tickets`
           : `daily sales failed: ${r.errors.join('; ')}`,
+        records: r.date ? 1 : 0,
       };
     }
     case 'item_sales': {
@@ -357,6 +378,7 @@ async function routeAttachment(
         detail: r.success
           ? `item sales: ${r.lineItemsWritten} rows, ${r.uniqueSkus} SKUs`
           : `item sales failed: ${r.errors.join('; ')}`,
+        records: r.rowsParsed,
       };
     }
     case 'inventory_snapshot': {
@@ -366,6 +388,7 @@ async function routeAttachment(
         detail: r.success
           ? `inventory snapshot ${r.snapshotDate}: ${r.uniqueSkus} SKUs, $${r.totalValue.toFixed(2)} on hand`
           : `inventory snapshot failed: ${r.errors.join('; ')}`,
+        records: r.rowsParsed,
       };
     }
     case 'flight_schedule': {
@@ -376,15 +399,54 @@ async function routeAttachment(
         detail: r.success
           ? `flights ${scheduleMonth}: ${r.totalFlights} flights (${r.arrivals}a / ${r.departures}d)`
           : `flights failed: ${(r.errors ?? []).join('; ')}`,
+        records: r.totalFlights,
       };
     }
     case 'carrier_capacity':
       // Carrier capacity emails never reach this router — they're handled
       // inline in scanInbox because they're body-only (no attachment). This
       // branch exists only to keep TypeScript's exhaustiveness check happy.
-      return { ok: false, detail: 'carrier_capacity should be handled inline, not routed through attachment pipeline' };
+      return {
+        ok: false,
+        detail: 'carrier_capacity should be handled inline, not routed through attachment pipeline',
+        records: 0,
+      };
     case 'unknown':
-      return { ok: false, detail: 'unrecognized file type' };
+      return { ok: false, detail: 'unrecognized file type', records: 0 };
+  }
+}
+
+async function logRoutedImport(
+  type: AttachmentType,
+  fileName: string,
+  routed: { ok: boolean; detail: string; records: number },
+): Promise<void> {
+  const source = importSourceForAttachment(type);
+  if (!source) return;
+
+  const sourceType =
+    source === 'flight_schedule'
+      ? 'flight_schedule'
+      : source === 'passenger_summary'
+        ? 'manual'
+        : 'counterpoint';
+
+  try {
+    await logImport({
+      source_type: sourceType,
+      file_name: fileName,
+      total_records: routed.records,
+      successful_records: routed.ok ? routed.records : 0,
+      failed_records: routed.ok ? 0 : routed.records,
+      error_messages: routed.ok ? null : { errors: [routed.detail] },
+      reconciliation_status: routed.ok ? 'complete' : 'failed',
+      source,
+      status: routed.ok ? 'success' : 'failed',
+      message: routed.ok ? null : routed.detail,
+      attempted_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[gmail-inbox] failed to write routed import log:', error);
   }
 }
 
@@ -456,6 +518,11 @@ export async function scanInbox(): Promise<InboxScanResult> {
           ? `capacity ${r.flight_date}: ${r.flightsMatched}/${r.flightsParsed} flights matched` +
             (r.flightsUnmatched > 0 ? ` (${r.flightsUnmatched} unmatched: ${r.unmatchedFlights.slice(0, 3).join(', ')})` : '')
           : `capacity failed: ${r.errors.join('; ') || r.warnings.join('; ') || 'no matches'}`;
+        await logRoutedImport(
+          'carrier_capacity',
+          `carrier-capacity:${subject}`,
+          { ok: r.success, detail, records: r.flightsParsed },
+        );
         await applyLabel(gmail, messageId, r.success ? labels.imported : labels.failed, true);
         if (r.success) {
           result.imported += 1;
@@ -469,6 +536,11 @@ export async function scanInbox(): Promise<InboxScanResult> {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        await logRoutedImport(
+          'carrier_capacity',
+          `carrier-capacity:${subject}`,
+          { ok: false, detail: msg, records: 0 },
+        );
         await applyLabel(gmail, messageId, labels.failed, true);
         result.failed += 1;
         result.details.push({
@@ -536,6 +608,7 @@ export async function scanInbox(): Promise<InboxScanResult> {
       try {
         const buffer = await downloadAttachment(gmail, messageId, att.attachmentId);
         const routed = await routeAttachment(type, buffer, att.filename, subject);
+        await logRoutedImport(type, att.filename, routed);
         if (routed.ok) {
           result.imported += 1;
           result.details.push({
@@ -556,6 +629,11 @@ export async function scanInbox(): Promise<InboxScanResult> {
         anyFailed = true;
         result.failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
+        await logRoutedImport(
+          type,
+          att.filename,
+          { ok: false, detail: msg, records: 0 },
+        );
         result.details.push({
           messageId, from, subject,
           attachment: att.filename, type,
@@ -584,6 +662,10 @@ export async function scanInbox(): Promise<InboxScanResult> {
       failed_records: result.failed,
       error_messages: { details: result.details },
       reconciliation_status: result.failed === 0 ? 'ok' : 'partial',
+      source: 'gmail_inbox',
+      status: result.failed === 0 ? 'success' : 'failed',
+      message: result.failed === 0 ? null : `${result.failed} Gmail import(s) failed`,
+      attempted_at: new Date().toISOString(),
     });
   } catch (err) {
     console.error('[gmail-inbox] failed to write scan log:', err);

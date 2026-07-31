@@ -2,6 +2,7 @@ import { optimizeSchedule, planWeek, DEFAULT_STAFF } from '@/lib/schedule';
 import type { StaffMember, FlightRecord } from '@/lib/schedule';
 import { getFlightData, storeSchedule } from '@/lib/db';
 import { NextRequest } from 'next/server';
+import type { TablesInsert } from '@/lib/database.types';
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
       dayOff: string;
       flights: FlightDetailOut[];
     }[] = [];
-    const allRecords: Record<string, unknown>[] = [];
+    const allRecords: TablesInsert<'staff_schedules'>[] = [];
 
     for (let i = 0; i < dailyFlightData.length; i++) {
       const { date, flights } = dailyFlightData[i];

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { storeAIAnalysis } from './db';
+import type { Json } from './database.types';
 
 const client = new Anthropic();
 
@@ -163,7 +164,7 @@ export async function runAnalysis(
   await storeAIAnalysis({
     analysis_date: new Date().toISOString().split('T')[0],
     analysis_type: analysisType,
-    input_context: inputData,
+    input_context: inputData as Json,
     claude_response: { text: analysisText },
     confidence_level: confidenceLevel,
     action_items: extractActionItems(analysisText),

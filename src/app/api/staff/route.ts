@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/db';
+import type { TablesInsert, TablesUpdate } from '@/lib/database.types';
 import { NextRequest } from 'next/server';
 
 const STAFF_ROLES = ['full-time', 'part-time', 'backup'] as const;
@@ -65,20 +66,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const staffMember = {
+      name: fields.name,
+      full_name: fields.full_name,
+      role: fields.role,
+      max_hours_per_day: fields.max_hours_per_day ?? 8,
+      min_hours_per_day: fields.min_hours_per_day ?? 5,
+      weekly_hour_target: fields.weekly_hour_target ?? null,
+      days_off_per_week: fields.days_off_per_week ?? null,
+      available_start: fields.available_start ?? '09:00',
+      available_end: fields.available_end ?? '20:00',
+      is_active: true,
+    } as TablesInsert<'staff_members'>;
+
     const { data, error } = await supabase
       .from('staff_members')
-      .insert({
-        name: fields.name,
-        full_name: fields.full_name,
-        role: fields.role,
-        max_hours_per_day: fields.max_hours_per_day ?? 8,
-        min_hours_per_day: fields.min_hours_per_day ?? 5,
-        weekly_hour_target: fields.weekly_hour_target ?? null,
-        days_off_per_week: fields.days_off_per_week ?? null,
-        available_start: fields.available_start ?? '09:00',
-        available_end: fields.available_end ?? '20:00',
-        is_active: true,
-      })
+      .insert(staffMember)
       .select()
       .single();
 
@@ -114,7 +117,7 @@ export async function PUT(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('staff_members')
-      .update(updates)
+      .update(updates as TablesUpdate<'staff_members'>)
       .eq('id', id)
       .select()
       .single();

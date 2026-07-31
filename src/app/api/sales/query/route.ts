@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     // Single query for the whole range
     const { data, error } = await supabase
       .from('sales_transactions')
-      .select('tkt_dt, tot_amt, disc_amt, tax_amt, cust_no')
+      .select('tkt_dt, tot_amt, disc_amt, tax_amt, ticket_count')
       .gte('tkt_dt', startDate)
       .lte('tkt_dt', endDate)
       .order('tkt_dt', { ascending: true });
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
       const d = (row.tkt_dt as string).substring(0, 10);
       if (!byDate[d]) byDate[d] = { sales: 0, tickets: 0, discount: 0, tax: 0 };
       byDate[d].sales += Number(row.tot_amt);
-      byDate[d].tickets += parseInt(row.cust_no as string) || 0;
+      byDate[d].tickets += row.ticket_count ?? 0;
       byDate[d].discount += Number(row.disc_amt);
       byDate[d].tax += Number(row.tax_amt);
     }

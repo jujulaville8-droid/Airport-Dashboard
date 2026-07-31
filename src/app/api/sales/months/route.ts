@@ -5,7 +5,7 @@ export async function GET() {
   try {
     const { data, error } = await supabase
       .from('sales_transactions')
-      .select('tkt_dt, tot_amt, cust_no')
+      .select('tkt_dt, tot_amt, ticket_count')
       .order('tkt_dt', { ascending: false });
 
     if (error) throw error;
@@ -19,7 +19,7 @@ export async function GET() {
       const m = (row.tkt_dt as string).substring(0, 7);
       if (!byMonth[m]) byMonth[m] = { totalSales: 0, totalTickets: 0, totalDays: 0 };
       byMonth[m].totalSales += Number(row.tot_amt);
-      byMonth[m].totalTickets += parseInt(row.cust_no as string) || 0;
+      byMonth[m].totalTickets += row.ticket_count ?? 0;
       byMonth[m].totalDays += 1;
     }
 

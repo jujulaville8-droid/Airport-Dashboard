@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/db';
+import type { TablesInsert } from '@/lib/database.types';
 import { NextRequest } from 'next/server';
 
 /**
@@ -78,12 +79,15 @@ export async function PUT(request: NextRequest) {
       return Response.json({ error: 'Item not found in catalog' }, { status: 404 });
     }
 
+    const rule = {
+      item_no: itemNo,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    } as TablesInsert<'reorder_rules'>;
+
     const { data, error } = await supabase
       .from('reorder_rules')
-      .upsert(
-        { item_no: itemNo, ...updates, updated_at: new Date().toISOString() },
-        { onConflict: 'item_no' }
-      )
+      .upsert(rule, { onConflict: 'item_no' })
       .select()
       .single();
 

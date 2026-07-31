@@ -337,10 +337,22 @@ export async function importItemSales(
       };
     }
 
-    // 4. Insert line items
+    // 4. Insert line items. tkt_dt belongs to the parent transaction and is
+    // intentionally omitted from the sales_line_items payload.
+    const lineItems = items.map((item) => ({
+      tkt_no: item.tkt_no,
+      item_no: item.item_no,
+      descr: item.descr,
+      categ_cod: item.categ_cod,
+      subcat_cod: item.subcat_cod,
+      qty_sold: item.qty_sold,
+      prc: item.prc,
+      ext_prc: item.ext_prc,
+      disc_amt: item.disc_amt,
+    }));
     const { error: insErr } = await supabase
       .from('sales_line_items')
-      .insert(items);
+      .insert(lineItems);
 
     if (insErr) {
       errors.push(`sales_line_items insert failed: ${insErr.message}`);

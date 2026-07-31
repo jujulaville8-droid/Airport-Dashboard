@@ -404,12 +404,11 @@ export async function importSalesReport(buffer: Buffer, fileName: string): Promi
     const totalReturns = days.reduce((sum, d) => sum + d.returns, 0);
 
     // Store as sales_transactions (one row per day)
-    // Hack: store ticket count in cust_no field (otherwise unused)
     const transactions = days.map(d => ({
       tkt_no: `${month}-${d.date}-${batchId}`,
       tkt_dt: new Date(d.date + 'T12:00:00').toISOString(),
       str_id: 'AIRPORT',
-      cust_no: String(d.tickets), // ticket count for the day
+      ticket_count: d.tickets,
       tot_amt: d.sales,
       disc_amt: d.discounts,
       tax_amt: 0,
@@ -604,7 +603,7 @@ export async function importDailySalesReport(buffer: Buffer, fileName: string): 
       tkt_no: `daily-${day.date}-${batchId}`,
       tkt_dt: new Date(day.date + 'T12:00:00').toISOString(),
       str_id: 'AIRPORT',
-      cust_no: String(day.tickets),
+      ticket_count: day.tickets,
       tot_amt: day.sales,
       disc_amt: day.discounts,
       tax_amt: 0,
