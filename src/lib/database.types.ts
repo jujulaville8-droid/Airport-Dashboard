@@ -89,6 +89,20 @@ export type Database = {
           terminal?: string | null;
         }
       >;
+      external_sync_state: TableDefinition<
+        {
+          last_success_at: string | null;
+          lease_until: string | null;
+          sync_key: string;
+          updated_at: string;
+        },
+        {
+          last_success_at?: string | null;
+          lease_until?: string | null;
+          sync_key: string;
+          updated_at?: string;
+        }
+      >;
       flight_schedule_files: TableDefinition<
         {
           file_name: string;
@@ -383,7 +397,16 @@ export type Database = {
       >;
     };
     Views: Record<never, never>;
-    Functions: Record<never, never>;
+    Functions: {
+      claim_external_sync: {
+        Args: {
+          requested_key: string;
+          requested_lease_seconds: number;
+          requested_now: string;
+        };
+        Returns: boolean;
+      };
+    };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;
   };
