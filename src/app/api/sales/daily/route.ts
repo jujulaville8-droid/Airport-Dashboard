@@ -1,38 +1,50 @@
 import { supabase } from '@/lib/db';
+import { addDays, todayYmd } from '@/lib/date-utils';
+import { fetchAllSalesPages } from '@/lib/sales-rows';
 import { NextRequest } from 'next/server';
+
+async function salesMeta() {
+  const { data, error } = await supabase
+    .from('import_logs')
+    .select('attempted_at')
+    .eq('source', 'sales')
+    .eq('status', 'success')
+    .order('attempted_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error('[api/sales/daily] import metadata failed:', error);
+    return { updatedAt: null, source: 'not-received' as const };
+  }
+  return {
+    updatedAt: data?.[0]?.attempted_at ?? null,
+    source: data?.[0]?.attempted_at ? 'automatic-gmail' as const : 'not-received' as const,
+  };
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
-    const date = searchParams.get('date') || new Date().toISOString().substring(0, 10);
+    const date = searchParams.get('date') || todayYmd();
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return Response.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 });
     }
 
-    // Fetch today + last 8 days (today, -1..-7, and -7 comparison) in ONE query.
-    // Build the date window using string arithmetic to avoid TZ drift.
-    const addDays = (ymd: string, n: number): string => {
-      const [y, m, d] = ymd.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      dt.setUTCDate(dt.getUTCDate() + n);
-      return dt.toISOString().substring(0, 10);
-    };
-
     const lastWeekStr = addDays(date, -7);
     const windowStart = lastWeekStr;
     const windowEnd = date;
 
-    const { data: windowRows, error: windowErr } = await supabase
+    const windowRows = await fetchAllSalesPages((from, to) => supabase
       .from('sales_transactions')
       .select('tkt_dt, tot_amt, ticket_count, disc_amt, hourly_breakdown')
       .gte('tkt_dt', windowStart + 'T00:00:00')
-      .lte('tkt_dt', windowEnd + 'T23:59:59');
-    if (windowErr) throw windowErr;
+      .lte('tkt_dt', windowEnd + 'T23:59:59')
+      .order('tkt_dt', { ascending: true })
+      .range(from, to));
 
     // Bucket by YYYY-MM-DD
     const byDate = new Map<string, { sales: number; tickets: number; discount: number; hourly: unknown }>();
-    for (const row of windowRows ?? []) {
+    for (const row of windowRows) {
       const ymd = (row.tkt_dt as string).substring(0, 10);
       const bucket = byDate.get(ymd) ?? { sales: 0, tickets: 0, discount: 0, hourly: null };
       bucket.sales += Number(row.tot_amt);
@@ -57,27 +69,28 @@ export async function GET(request: NextRequest) {
     const today = dayFrom(date);
     const lastWeek = dayFrom(lastWeekStr);
 
-    const trendDays: { date: string; sales: number; tickets: number }[] = [];
+    const trendDays: { date: string; sales: number; tickets: number; hasData: boolean }[] = [];
     for (let i = 7; i >= 1; i--) {
       const dStr = addDays(date, -i);
       const d = dayFrom(dStr);
-      trendDays.push({ date: dStr, sales: d.sales, tickets: d.tickets });
+      trendDays.push({ date: dStr, sales: d.sales, tickets: d.tickets, hasData: d.hasData });
     }
 
     // Day of week average — scope to last 90 days to avoid unbounded scan + silent 1000-row truncation.
     // (Previously fetched entire table; Supabase default limit clipped at 1000 rows silently.)
     const selectedDow = new Date(date + 'T12:00:00Z').getUTCDay(); // 0 = Sunday
     const dowStart = addDays(date, -90);
-    const { data: dowRows, error: dowErr } = await supabase
+    const dowRows = await fetchAllSalesPages((from, to) => supabase
       .from('sales_transactions')
       .select('tkt_dt, tot_amt')
       .gte('tkt_dt', dowStart + 'T00:00:00')
-      .lt('tkt_dt', date + 'T00:00:00');
-    if (dowErr) throw dowErr;
+      .lt('tkt_dt', date + 'T00:00:00')
+      .order('tkt_dt', { ascending: true })
+      .range(from, to));
 
     let dowTotal = 0;
     let dowCount = 0;
-    for (const row of dowRows ?? []) {
+    for (const row of dowRows) {
       const rowDate = (row.tkt_dt as string).substring(0, 10);
       const dow = new Date(rowDate + 'T12:00:00Z').getUTCDay();
       if (dow === selectedDow) {
@@ -97,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     const dayName = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
 
-    return Response.json({
+    const data = {
       date,
       dayName,
       today: {
@@ -121,7 +134,8 @@ export async function GET(request: NextRequest) {
         dowCount,
       },
       trend: trendDays,
-    });
+    };
+    return Response.json({ ...data, data, meta: await salesMeta() });
   } catch (error) {
     console.error('[api/sales/daily] error:', error);
     return Response.json({ error: 'Failed to load daily sales' }, { status: 500 });

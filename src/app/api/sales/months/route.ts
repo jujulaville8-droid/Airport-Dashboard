@@ -1,16 +1,37 @@
 import { supabase } from '@/lib/db';
+import { addDays, todayYmd } from '@/lib/date-utils';
+import { fetchAllSalesPages } from '@/lib/sales-rows';
 import { NextRequest } from 'next/server';
+
+async function salesMeta() {
+  const { data, error } = await supabase
+    .from('import_logs')
+    .select('attempted_at')
+    .eq('source', 'sales')
+    .eq('status', 'success')
+    .order('attempted_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error('[api/sales/months] import metadata failed:', error);
+    return { updatedAt: null, source: 'not-received' as const };
+  }
+  return {
+    updatedAt: data?.[0]?.attempted_at ?? null,
+    source: data?.[0]?.attempted_at ? 'automatic-gmail' as const : 'not-received' as const,
+  };
+}
 
 export async function GET() {
   try {
-    const { data, error } = await supabase
+    const data = await fetchAllSalesPages((from, to) => supabase
       .from('sales_transactions')
       .select('tkt_dt, tot_amt, ticket_count')
-      .order('tkt_dt', { ascending: false });
-
-    if (error) throw error;
+      .gte('tkt_dt', `${addDays(todayYmd(), -730)}T00:00:00`)
+      .order('tkt_dt', { ascending: false })
+      .range(from, to));
     if (!data || data.length === 0) {
-      return Response.json({ months: [], latestMonth: null, summaries: [] });
+      const payload = { months: [], latestMonth: null, summaries: [] };
+      return Response.json({ ...payload, data: payload, meta: await salesMeta() });
     }
 
     // Group by month in a single pass
@@ -34,13 +55,15 @@ export async function GET() {
 
     const months = summaries.map(s => s.month);
 
-    return Response.json({
+    const payload = {
       months,
       latestMonth: months[0] || null,
       summaries,
-    });
+    };
+    return Response.json({ ...payload, data: payload, meta: await salesMeta() });
   } catch (error) {
-    return Response.json({ error: (error as Error).message }, { status: 500 });
+    console.error('[api/sales/months] error:', error);
+    return Response.json({ error: 'Failed to load monthly sales' }, { status: 500 });
   }
 }
 
