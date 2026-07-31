@@ -38,7 +38,19 @@ export async function GET(request: NextRequest) {
     const flights = await getFlightDataForMonth(month);
 
     if (!flights || flights.length === 0) {
-      return Response.json({ month, totalFlights: 0, days: [], summary: null });
+      return Response.json({
+        month,
+        totalFlights: 0,
+        totalDepartures: 0,
+        totalHVDepartures: 0,
+        totalPassengers: 0,
+        avgDailyPax: 0,
+        busiestDay: null,
+        quietestDay: null,
+        dayOfWeekAvg: [],
+        airlines: [],
+        days: [],
+      });
     }
 
     // Group by date

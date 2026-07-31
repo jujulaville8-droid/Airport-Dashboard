@@ -12,5 +12,10 @@ export default defineConfig({
     url: 'http://localhost:3001',
     reuseExistingServer: true,
     timeout: 120_000,
+    env: {
+      AUTH_USERNAME: 'e2e-admin',
+      AUTH_PASSWORD: 'e2e-password',
+      AUTH_SECRET: 'e2e-only-secret-with-at-least-thirty-two-characters',
+    },
   },
 });
