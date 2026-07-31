@@ -33,7 +33,11 @@ export type ExistingFlight = TablesInsert<'flight_data'>;
 
 export type FlightSyncDependencies = {
   apiKey: string | undefined;
-  getState(syncKey: string): Promise<{ lastSuccessAt: string | null }>;
+  getState(syncKey: string): Promise<{
+    lastSuccessAt: string | null;
+    lastAttemptAt: string | null;
+    leaseUntil: string | null;
+  }>;
   claim(syncKey: string, now: Date, leaseSeconds: number): Promise<boolean>;
   complete(syncKey: string, at: Date): Promise<void>;
   release(syncKey: string): Promise<void>;
@@ -47,7 +51,8 @@ export type FlightSyncDependencies = {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LIVE_FRESH_MS = 6 * 60 * 60 * 1000;
 const PLANNING_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
-const LEASE_SECONDS = 5 * 60;
+const LEASE_SECONDS = 15 * 60;
+const RETRY_COOLDOWN_MS = 15 * 60 * 1000;
 
 function datePlusDays(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -152,11 +157,15 @@ function defaultDependencies(apiKey: string | undefined): FlightSyncDependencies
     async getState(syncKey) {
       const { data, error } = await supabase
         .from('external_sync_state')
-        .select('last_success_at')
+        .select('last_success_at, updated_at, lease_until')
         .eq('sync_key', syncKey)
         .maybeSingle();
       if (error) throw error;
-      return { lastSuccessAt: data?.last_success_at ?? null };
+      return {
+        lastSuccessAt: data?.last_success_at ?? null,
+        lastAttemptAt: data?.updated_at ?? null,
+        leaseUntil: data?.lease_until ?? null,
+      };
     },
     async claim(syncKey, now, leaseSeconds) {
       const { data, error } = await supabase.rpc('claim_external_sync', {
@@ -239,7 +248,8 @@ export async function ensureDepartureDataFresh(
     };
   }
 
-  const syncKey = `aerodatabox:${request.mode}`;
+  const endDate = datePlusDays(request.startDate, days - 1);
+  const syncKey = `aerodatabox:${request.mode}:${request.startDate}:${endDate}`;
   const state = await deps.getState(syncKey);
   const freshness = request.mode === 'live' ? LIVE_FRESH_MS : PLANNING_FRESH_MS;
   if (isFresh(state.lastSuccessAt, now, freshness)) {
@@ -248,6 +258,29 @@ export async function ensureDepartureDataFresh(
       records: 0,
       lastSuccessAt: state.lastSuccessAt,
       message: null,
+    };
+  }
+
+  if (state.leaseUntil && new Date(state.leaseUntil).getTime() > now.getTime()) {
+    return {
+      status: 'in-progress',
+      records: 0,
+      lastSuccessAt: state.lastSuccessAt,
+      message: 'A departure refresh is already in progress.',
+    };
+  }
+  const lastAttempt = state.lastAttemptAt ? new Date(state.lastAttemptAt).getTime() : NaN;
+  const lastSuccess = state.lastSuccessAt ? new Date(state.lastSuccessAt).getTime() : NaN;
+  if (
+    Number.isFinite(lastAttempt) &&
+    (!Number.isFinite(lastSuccess) || lastAttempt > lastSuccess) &&
+    now.getTime() - lastAttempt < RETRY_COOLDOWN_MS
+  ) {
+    return {
+      status: 'failed',
+      records: 0,
+      lastSuccessAt: state.lastSuccessAt,
+      message: 'Departure refresh is in a retry cooldown; showing stored data.',
     };
   }
 
@@ -265,7 +298,6 @@ export async function ensureDepartureDataFresh(
     ? [buildLiveWindow(request.startDate, now)]
     : buildDepartureWindows(request.startDate, days);
   const providerRows: NormalizedDeparture[] = [];
-  const endDate = datePlusDays(request.startDate, days - 1);
   let persistedRecords = 0;
 
   try {
@@ -306,14 +338,19 @@ export async function ensureDepartureDataFresh(
     }
 
     const message = 'Departure refresh failed; retained existing flight data.';
-    await deps.record({
-      source: 'flight_schedule',
-      fileName: `aerodatabox-${request.mode}`,
-      success: false,
-      records: persistedRecords,
-      message,
-    });
-    await deps.release(syncKey);
+    try {
+      await deps.record({
+        source: 'flight_schedule',
+        fileName: `aerodatabox-${request.mode}`,
+        success: false,
+        records: persistedRecords,
+        message,
+      });
+    } catch {
+      // Failure telemetry is best-effort; the lease still must be released.
+    } finally {
+      await deps.release(syncKey);
+    }
     return {
       status: 'failed',
       records: persistedRecords,
@@ -321,4 +358,56 @@ export async function ensureDepartureDataFresh(
       message,
     };
   }
+}
+
+function mondayForDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  const daysSinceMonday = (parsed.getUTCDay() + 6) % 7;
+  parsed.setUTCDate(parsed.getUTCDate() - daysSinceMonday);
+  return parsed.toISOString().slice(0, 10);
+}
+
+export async function ensureDeparturePlanningHorizonFresh(
+  startDate: string,
+  dependencies?: FlightSyncDependencies,
+): Promise<FlightSyncResult> {
+  if (!DATE_PATTERN.test(startDate)) throw new Error('startDate must use YYYY-MM-DD');
+  const horizonEnd = datePlusDays(startDate, 13);
+  const weekStarts: string[] = [];
+  let weekStart = mondayForDate(startDate);
+  while (weekStart <= horizonEnd) {
+    weekStarts.push(weekStart);
+    weekStart = datePlusDays(weekStart, 7);
+  }
+
+  const results: FlightSyncResult[] = [];
+  for (const bucketStart of weekStarts) {
+    const result = await ensureDepartureDataFresh(
+      { mode: 'planning', startDate: bucketStart, days: 7 },
+      dependencies,
+    );
+    results.push(result);
+    if (result.status === 'failed' || result.status === 'not-configured' || result.status === 'in-progress') break;
+  }
+
+  const priority: FlightSyncResult['status'][] = [
+    'failed',
+    'not-configured',
+    'in-progress',
+    'updated',
+    'fresh',
+  ];
+  const status = priority.find((candidate) =>
+    results.some((result) => result.status === candidate)) ?? 'fresh';
+  const lastSuccessAt = results
+    .map((result) => result.lastSuccessAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+  return {
+    status,
+    records: results.reduce((sum, result) => sum + result.records, 0),
+    lastSuccessAt,
+    message: results.find((result) => result.message)?.message ?? null,
+  };
 }

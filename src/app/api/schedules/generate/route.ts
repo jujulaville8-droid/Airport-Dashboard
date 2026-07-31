@@ -3,7 +3,24 @@ import type { StaffMember, FlightRecord } from '@/lib/schedule';
 import { getFlightData, storeSchedule } from '@/lib/db';
 import { NextRequest } from 'next/server';
 import type { TablesInsert } from '@/lib/database.types';
-import { ensureDepartureDataFresh } from '@/lib/flight-sync';
+import { ensureDeparturePlanningHorizonFresh } from '@/lib/flight-sync';
+
+function parseIsoDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+    ? parsed
+    : null;
+}
+
+function todayInAntigua(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Antigua',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,19 +32,38 @@ export async function POST(request: NextRequest) {
     }
 
     const staffMembers: StaffMember[] = staff || DEFAULT_STAFF;
-    const startDate = new Date(scheduleDate);
-    const endDate = scheduleDateEnd ? new Date(scheduleDateEnd) : new Date(scheduleDate);
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
+    const startDate = parseIsoDate(scheduleDate);
+    const endDate = parseIsoDate(scheduleDateEnd ?? scheduleDate);
+    if (!startDate || !endDate || endDate < startDate) {
       return Response.json({ error: 'Invalid schedule date range' }, { status: 400 });
     }
 
     const requestedDays = Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+    if (requestedDays > 14) {
+      return Response.json({ error: 'Schedule range cannot exceed 14 days' }, { status: 400 });
+    }
+    const today = todayInAntigua();
+    const planningEnd = new Date(`${today}T00:00:00.000Z`);
+    planningEnd.setUTCDate(planningEnd.getUTCDate() + 13);
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    if (startDate < todayDate || endDate > planningEnd) {
+      return Response.json(
+        { error: 'Schedules must stay within the upcoming 14-day flight window' },
+        { status: 400 },
+      );
+    }
     try {
-      await ensureDepartureDataFresh({
-        mode: 'planning',
-        startDate: scheduleDate,
-        days: Math.min(requestedDays, 14),
-      });
+      let syncResult = await ensureDeparturePlanningHorizonFresh(today);
+      for (let attempt = 0; syncResult.status === 'in-progress' && attempt < 12; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        syncResult = await ensureDeparturePlanningHorizonFresh(today);
+      }
+      if (syncResult.status === 'in-progress') {
+        return Response.json(
+          { error: 'Departure refresh is still running. Please retry shortly.' },
+          { status: 409 },
+        );
+      }
     } catch {
       console.error('[api/schedules/generate] provider refresh failed; using stored data');
     }

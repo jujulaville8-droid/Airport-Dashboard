@@ -63,31 +63,50 @@ export function FlightsPage() {
 
   useEffect(() => {
     const current = ++generation.current;
-    fetch(`/api/flights/day?date=${date}`, { cache: 'no-store' })
-      .then(async (response) => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const loadAnalytics = async () => {
+      try {
+        const response = await fetch(`/api/flights/analytics?month=${date.slice(0, 7)}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error();
+        if (current === generation.current) setAnalytics(await response.json());
+      } catch {
+        if (current === generation.current) setAnalytics(null);
+      }
+    };
+    const loadDay = async () => {
+      try {
+        const response = await fetch(`/api/flights/day?date=${date}`, { cache: 'no-store' });
         if (!response.ok) throw new Error();
         const payload = (await response.json()) as { flights: Flight[]; source: FlightSource };
-        if (current === generation.current) {
-          setFlights(payload.flights);
-          setSource(payload.source);
-          setError(null);
+        if (current !== generation.current) return;
+        setFlights(payload.flights);
+        setSource(payload.source);
+        setError(null);
+        if (payload.source.status === 'in-progress' && attempts < 24) {
+          attempts += 1;
+          retryTimer = setTimeout(() => void loadDay(), 2_500);
+          return;
         }
-      })
-      .catch(() => {
+        await loadAnalytics();
+      } catch {
         if (current === generation.current) {
           setFlights([]);
+          setSource({
+            provider: 'AeroDataBox',
+            status: 'failed',
+            records: 0,
+            lastSuccessAt: null,
+            message: 'Departure request failed; retry or check Data Connections.',
+          });
           setError('Flight board could not be refreshed.');
         }
-      });
-  }, [date]);
-
-  useEffect(() => {
-    fetch(`/api/flights/analytics?month=${date.slice(0, 7)}`, { cache: 'no-store' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        setAnalytics(await response.json());
-      })
-      .catch(() => setAnalytics(null));
+      }
+    };
+    void loadDay();
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [date]);
 
   const shown = useMemo(
@@ -135,7 +154,7 @@ export function FlightsPage() {
       />
 
       <div className="flex flex-wrap gap-3">
-        <input aria-label="Board date" className="min-h-11 rounded-md border border-line px-3" type="date" value={date} onChange={(event) => { setFlights(null); setDate(event.target.value); }} />
+        <input aria-label="Board date" className="min-h-11 rounded-md border border-line px-3" type="date" value={date} onChange={(event) => { setFlights(null); setSource(null); setAnalytics(null); setDate(event.target.value); }} />
         <select aria-label="Airline" className="min-h-11 rounded-md border border-line px-3" value={airline} onChange={(event) => setAirline(event.target.value)}>
           <option value="all">All airlines</option>
           {airlines.map((item) => <option key={item}>{item}</option>)}

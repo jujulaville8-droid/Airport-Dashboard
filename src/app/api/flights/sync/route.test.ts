@@ -1,11 +1,15 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const ensureDepartureDataFresh = vi.hoisted(() => vi.fn());
+const ensureDeparturePlanningHorizonFresh = vi.hoisted(() => vi.fn());
 
-vi.mock('@/lib/flight-sync', () => ({ ensureDepartureDataFresh }));
+vi.mock('@/lib/flight-sync', () => ({
+  ensureDepartureDataFresh,
+  ensureDeparturePlanningHorizonFresh,
+}));
 
 import { POST } from './route';
 
@@ -18,7 +22,13 @@ function request(body: Record<string, unknown>) {
 }
 
 describe('POST /api/flights/sync', () => {
-  beforeEach(() => ensureDepartureDataFresh.mockReset());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T12:00:00.000Z'));
+    ensureDepartureDataFresh.mockReset();
+    ensureDeparturePlanningHorizonFresh.mockReset();
+  });
+  afterEach(() => vi.useRealTimers());
 
   it('rejects invalid sync inputs before calling the provider', async () => {
     const response = await POST(request({ mode: 'all', startDate: 'July 31' }));
@@ -28,7 +38,7 @@ describe('POST /api/flights/sync', () => {
   });
 
   it('returns the quota-safe synchronizer result', async () => {
-    ensureDepartureDataFresh.mockResolvedValue({
+    ensureDeparturePlanningHorizonFresh.mockResolvedValue({
       status: 'updated',
       records: 12,
       lastSuccessAt: '2026-07-31T12:00:00.000Z',
@@ -38,16 +48,12 @@ describe('POST /api/flights/sync', () => {
     const response = await POST(request({
       mode: 'planning',
       startDate: '2026-07-31',
-      days: 7,
+      days: 14,
     }));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: 'updated', records: 12 });
-    expect(ensureDepartureDataFresh).toHaveBeenCalledWith({
-      mode: 'planning',
-      startDate: '2026-07-31',
-      days: 7,
-    });
+    expect(ensureDeparturePlanningHorizonFresh).toHaveBeenCalledWith('2026-07-31');
   });
 
   it('does not expose provider errors or credentials', async () => {

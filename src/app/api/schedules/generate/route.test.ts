@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => {
@@ -10,14 +10,14 @@ const mocks = vi.hoisted(() => {
   deleteQuery.lte = vi.fn(async () => ({ error: null }));
   return {
     deleteQuery,
-    ensureDepartureDataFresh: vi.fn(),
+    ensureDeparturePlanningHorizonFresh: vi.fn(),
     getFlightData: vi.fn(),
     storeSchedule: vi.fn(),
   };
 });
 
 vi.mock('@/lib/flight-sync', () => ({
-  ensureDepartureDataFresh: mocks.ensureDepartureDataFresh,
+  ensureDeparturePlanningHorizonFresh: mocks.ensureDeparturePlanningHorizonFresh,
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -42,10 +42,13 @@ import { POST } from './route';
 
 describe('POST /api/schedules/generate', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T12:00:00.000Z'));
     vi.clearAllMocks();
-    mocks.ensureDepartureDataFresh.mockResolvedValue({ status: 'fresh' });
+    mocks.ensureDeparturePlanningHorizonFresh.mockResolvedValue({ status: 'fresh' });
     mocks.getFlightData.mockResolvedValue([]);
   });
+  afterEach(() => vi.useRealTimers());
 
   it('refreshes departures before reading demand for schedule generation', async () => {
     const response = await POST(new NextRequest('http://localhost/api/schedules/generate', {
@@ -55,18 +58,14 @@ describe('POST /api/schedules/generate', () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(mocks.ensureDepartureDataFresh).toHaveBeenCalledWith({
-      mode: 'planning',
-      startDate: '2026-08-01',
-      days: 2,
-    });
-    expect(mocks.ensureDepartureDataFresh.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.ensureDeparturePlanningHorizonFresh).toHaveBeenCalledWith('2026-07-31');
+    expect(mocks.ensureDeparturePlanningHorizonFresh.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.getFlightData.mock.invocationCallOrder[0],
     );
   });
 
   it('retains stored departures when the provider refresh throws', async () => {
-    mocks.ensureDepartureDataFresh.mockRejectedValueOnce(new Error('provider unavailable'));
+    mocks.ensureDeparturePlanningHorizonFresh.mockRejectedValueOnce(new Error('provider unavailable'));
 
     const response = await POST(new NextRequest('http://localhost/api/schedules/generate', {
       method: 'POST',

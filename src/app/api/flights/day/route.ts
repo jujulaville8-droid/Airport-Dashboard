@@ -1,5 +1,9 @@
 import { supabase } from '@/lib/db';
-import { ensureDepartureDataFresh, type FlightSyncResult } from '@/lib/flight-sync';
+import {
+  ensureDepartureDataFresh,
+  ensureDeparturePlanningHorizonFresh,
+  type FlightSyncResult,
+} from '@/lib/flight-sync';
 import { NextRequest } from 'next/server';
 
 function todayInAntigua(): string {
@@ -9,6 +13,12 @@ function todayInAntigua(): string {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date());
+}
+
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function daysBetween(start: string, end: string): number {
@@ -23,7 +33,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const date = searchParams.get('date');
 
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    if (!date || !isIsoDate(date)) {
       return Response.json({ error: 'date param required (YYYY-MM-DD)' }, { status: 400 });
     }
 
@@ -37,11 +47,9 @@ export async function GET(request: NextRequest) {
     };
     if (offset >= 0 && offset <= 13) {
       try {
-        source = await ensureDepartureDataFresh({
-          mode: offset === 0 ? 'live' : 'planning',
-          startDate: offset === 0 ? date : today,
-          ...(offset === 0 ? {} : { days: 14 }),
-        });
+        source = offset === 0
+          ? await ensureDepartureDataFresh({ mode: 'live', startDate: date })
+          : await ensureDeparturePlanningHorizonFresh(today);
       } catch {
         source = {
           status: 'failed',

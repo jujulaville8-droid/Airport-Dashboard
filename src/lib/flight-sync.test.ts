@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AeroDataBoxDeparture, DepartureWindow } from './aerodatabox';
 import {
   ensureDepartureDataFresh,
+  ensureDeparturePlanningHorizonFresh,
   type ExistingFlight,
   type FlightSyncDependencies,
 } from './flight-sync';
@@ -30,6 +31,8 @@ function makeDependencies(options?: {
   apiKey?: string | undefined;
   claimed?: boolean;
   lastSuccessAt?: string | null;
+  lastAttemptAt?: string | null;
+  leaseUntil?: string | null;
   existing?: ExistingFlight[];
   providerRows?: AeroDataBoxDeparture[];
 }) {
@@ -39,6 +42,8 @@ function makeDependencies(options?: {
     apiKey: options && 'apiKey' in options ? options.apiKey : 'server-secret',
     getState: vi.fn(async () => ({
       lastSuccessAt: options?.lastSuccessAt ?? null,
+      lastAttemptAt: options?.lastAttemptAt ?? options?.lastSuccessAt ?? null,
+      leaseUntil: options?.leaseUntil ?? null,
     })),
     claim: vi.fn(async () => options?.claimed ?? true),
     complete: vi.fn(async () => undefined),
@@ -86,7 +91,9 @@ describe('ensureDepartureDataFresh', () => {
   });
 
   it('returns in-progress when another server holds the sync lease', async () => {
-    const { dependencies } = makeDependencies({ claimed: false });
+    const { dependencies } = makeDependencies({
+      leaseUntil: '2099-08-03T12:05:00.000Z',
+    });
 
     const result = await ensureDepartureDataFresh(
       { mode: 'live', startDate: '2026-08-03' },
@@ -94,6 +101,61 @@ describe('ensureDepartureDataFresh', () => {
     );
 
     expect(result.status).toBe('in-progress');
+    expect(dependencies.fetchWindow).not.toHaveBeenCalled();
+  });
+
+  it('keys planning freshness to the exact requested coverage', async () => {
+    const { dependencies } = makeDependencies();
+
+    await ensureDepartureDataFresh(
+      { mode: 'planning', startDate: '2026-08-03', days: 2 },
+      dependencies,
+    );
+
+    expect(dependencies.getState).toHaveBeenCalledWith(
+      'aerodatabox:planning:2026-08-03:2026-08-04',
+    );
+    expect(dependencies.claim).toHaveBeenCalledWith(
+      'aerodatabox:planning:2026-08-03:2026-08-04',
+      expect.any(Date),
+      900,
+    );
+  });
+
+  it('uses stable weekly buckets for the rolling 14-day planning horizon', async () => {
+    const { dependencies } = makeDependencies();
+
+    await ensureDeparturePlanningHorizonFresh('2026-08-03', dependencies);
+
+    expect(dependencies.getState).toHaveBeenNthCalledWith(
+      1,
+      'aerodatabox:planning:2026-08-03:2026-08-09',
+    );
+    expect(dependencies.getState).toHaveBeenNthCalledWith(
+      2,
+      'aerodatabox:planning:2026-08-10:2026-08-16',
+    );
+    expect(dependencies.getState).toHaveBeenCalledTimes(2);
+  });
+
+  it('backs off after a recent failed attempt without consuming provider quota', async () => {
+    const { dependencies } = makeDependencies({
+      lastAttemptAt: '2026-08-03T11:55:00.000Z',
+    });
+
+    const result = await ensureDepartureDataFresh(
+      {
+        mode: 'planning',
+        startDate: '2026-08-03',
+        days: 14,
+        now: new Date('2026-08-03T12:00:00.000Z'),
+      },
+      dependencies,
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.message).toMatch(/retry cooldown/i);
+    expect(dependencies.claim).not.toHaveBeenCalled();
     expect(dependencies.fetchWindow).not.toHaveBeenCalled();
   });
 
@@ -168,6 +230,24 @@ describe('ensureDepartureDataFresh', () => {
       records: 0,
       message: 'Departure refresh failed; retained existing flight data.',
     }]);
+    expect(dependencies.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the lease even when failure logging also fails', async () => {
+    const { dependencies } = makeDependencies();
+    dependencies.fetchWindow = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+    dependencies.record = vi.fn(async () => {
+      throw new Error('logging unavailable');
+    });
+
+    const result = await ensureDepartureDataFresh(
+      { mode: 'live', startDate: '2026-08-03' },
+      dependencies,
+    );
+
+    expect(result.status).toBe('failed');
     expect(dependencies.release).toHaveBeenCalledTimes(1);
   });
 

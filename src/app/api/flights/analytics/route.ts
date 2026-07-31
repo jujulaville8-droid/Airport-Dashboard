@@ -1,5 +1,5 @@
 import { getFlightDataForMonth } from '@/lib/db';
-import { ensureDepartureDataFresh } from '@/lib/flight-sync';
+import { ensureDeparturePlanningHorizonFresh } from '@/lib/flight-sync';
 import { NextRequest } from 'next/server';
 
 const HV_THRESHOLD = 100;
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     }).format(new Date());
     if (month === today.slice(0, 7)) {
       try {
-        await ensureDepartureDataFresh({ mode: 'planning', startDate: today, days: 14 });
+        await ensureDeparturePlanningHorizonFresh(today);
       } catch {
         console.error('[api/flights/analytics] provider refresh failed; using stored data');
       }
