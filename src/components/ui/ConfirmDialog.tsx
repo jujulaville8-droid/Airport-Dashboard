@@ -14,12 +14,48 @@ export interface ConfirmDialogProps {
   busy?: boolean;
 }
 
+const focusableSelector = [
+  'a[href]',
+  'area[href]',
+  'button',
+  'input:not([type="hidden"])',
+  'select',
+  'textarea',
+  'iframe',
+  'object',
+  'embed',
+  '[contenteditable="true"]',
+  '[tabindex]',
+].join(', ');
+
+function isTabbableAndVisible(
+  element: HTMLElement,
+  container: HTMLElement,
+): boolean {
+  if (element.matches(':disabled') || element.tabIndex < 0) return false;
+  if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+
+  let current: HTMLElement | null = element;
+  while (current && container.contains(current)) {
+    const style = window.getComputedStyle(current);
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.visibility === 'collapse'
+    ) {
+      return false;
+    }
+    if (current === container) break;
+    current = current.parentElement;
+  }
+
+  return true;
+}
+
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  );
+    container.querySelectorAll<HTMLElement>(focusableSelector),
+  ).filter((element) => isTabbableAndVisible(element, container));
 }
 
 export function ConfirmDialog({

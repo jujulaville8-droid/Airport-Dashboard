@@ -18,12 +18,48 @@ export interface DetailDrawerProps {
   closeLabel?: string;
 }
 
+const focusableSelector = [
+  'a[href]',
+  'area[href]',
+  'button',
+  'input:not([type="hidden"])',
+  'select',
+  'textarea',
+  'iframe',
+  'object',
+  'embed',
+  '[contenteditable="true"]',
+  '[tabindex]',
+].join(', ');
+
+function isTabbableAndVisible(
+  element: HTMLElement,
+  container: HTMLElement,
+): boolean {
+  if (element.matches(':disabled') || element.tabIndex < 0) return false;
+  if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+
+  let current: HTMLElement | null = element;
+  while (current && container.contains(current)) {
+    const style = window.getComputedStyle(current);
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.visibility === 'collapse'
+    ) {
+      return false;
+    }
+    if (current === container) break;
+    current = current.parentElement;
+  }
+
+  return true;
+}
+
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  );
+    container.querySelectorAll<HTMLElement>(focusableSelector),
+  ).filter((element) => isTabbableAndVisible(element, container));
 }
 
 export function DetailDrawer({
@@ -126,7 +162,7 @@ export function DetailDrawer({
           <button
             ref={closeRef}
             aria-label={closeLabel}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-2xl leading-none text-ink transition-colors hover:bg-app-bg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="terminal-focus inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-2xl leading-none text-ink transition-colors hover:bg-app-bg"
             onClick={onClose}
             type="button"
           >
