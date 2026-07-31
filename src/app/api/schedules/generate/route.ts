@@ -3,6 +3,7 @@ import type { StaffMember, FlightRecord } from '@/lib/schedule';
 import { getFlightData, storeSchedule } from '@/lib/db';
 import { NextRequest } from 'next/server';
 import type { TablesInsert } from '@/lib/database.types';
+import { ensureDepartureDataFresh } from '@/lib/flight-sync';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,6 +17,20 @@ export async function POST(request: NextRequest) {
     const staffMembers: StaffMember[] = staff || DEFAULT_STAFF;
     const startDate = new Date(scheduleDate);
     const endDate = scheduleDateEnd ? new Date(scheduleDateEnd) : new Date(scheduleDate);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
+      return Response.json({ error: 'Invalid schedule date range' }, { status: 400 });
+    }
+
+    const requestedDays = Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+    try {
+      await ensureDepartureDataFresh({
+        mode: 'planning',
+        startDate: scheduleDate,
+        days: Math.min(requestedDays, 14),
+      });
+    } catch {
+      console.error('[api/schedules/generate] provider refresh failed; using stored data');
+    }
 
     interface FlightDetailOut {
       flight_num: string;

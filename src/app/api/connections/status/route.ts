@@ -87,7 +87,8 @@ export async function GET() {
       process.env.GMAIL_CLIENT_SECRET,
       process.env.GMAIL_REFRESH_TOKEN,
     ].every(configured);
-    const overall = !cronConfigured || !gmailConfigured
+    const flightProviderConfigured = configured(process.env.AERODATABOX_RAPIDAPI_KEY);
+    const overall = !cronConfigured || !gmailConfigured || !flightProviderConfigured
       ? 'not-configured'
       : sources.every((source) => source.status === 'healthy')
         ? 'healthy'
@@ -98,6 +99,12 @@ export async function GET() {
       cron: {
         configured: cronConfigured,
         schedule: 'hourly',
+      },
+      flightProvider: {
+        provider: 'AeroDataBox',
+        configured: flightProviderConfigured,
+        airport: 'ANU',
+        direction: 'departure',
       },
       sources,
       recentImports,

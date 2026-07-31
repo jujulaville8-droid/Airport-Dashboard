@@ -22,6 +22,12 @@ export interface ConnectionsStatusResponse {
     configured: boolean;
     schedule: 'hourly';
   };
+  flightProvider: {
+    provider: 'AeroDataBox';
+    configured: boolean;
+    airport: 'ANU';
+    direction: 'departure';
+  };
   sources: ImportSourceHealth[];
   recentImports: RecentImport[];
 }

@@ -1,4 +1,5 @@
 import { getFlightDataForMonth } from '@/lib/db';
+import { ensureDepartureDataFresh } from '@/lib/flight-sync';
 import { NextRequest } from 'next/server';
 
 const HV_THRESHOLD = 100;
@@ -33,6 +34,20 @@ export async function GET(request: NextRequest) {
 
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
       return Response.json({ error: 'month param required (YYYY-MM)' }, { status: 400 });
+    }
+
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Antigua',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    if (month === today.slice(0, 7)) {
+      try {
+        await ensureDepartureDataFresh({ mode: 'planning', startDate: today, days: 14 });
+      } catch {
+        console.error('[api/flights/analytics] provider refresh failed; using stored data');
+      }
     }
 
     const flights = await getFlightDataForMonth(month);
