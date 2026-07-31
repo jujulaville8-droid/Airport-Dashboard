@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('flight_data')
-      .select('id, flight_num, airline_code, scheduled_time, flight_type, estimated_passengers')
+      .select('id, flight_num, airline_code, scheduled_time, flight_type, estimated_passengers, actual_passengers')
       .eq('flight_date', date)
       .order('scheduled_time', { ascending: true });
 
