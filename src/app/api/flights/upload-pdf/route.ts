@@ -1,11 +1,13 @@
 import { importFlightSchedule } from '@/lib/flight-schedule';
 import { deleteFlightMonth, deleteFlightSchedulePDF, getUploadedMonths } from '@/lib/db';
+import { recordImportHealthResult } from '@/lib/import-health-log';
 import { NextRequest } from 'next/server';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 const SCHEDULE_MONTH_RE = /^\d{4}-\d{2}$/;
 
 export async function POST(request: NextRequest) {
+  let attemptedFileName: string | null = null;
   try {
     const formData = await request.formData();
     const fileEntry = formData.get('file');
@@ -37,12 +39,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    attemptedFileName = file.name;
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await importFlightSchedule(buffer, scheduleMonth, file.name);
+    try {
+      await recordImportHealthResult({
+        source: 'flight_schedule',
+        fileName: file.name,
+        success: result.success,
+        records: result.totalFlights,
+        message: result.errors.join('; ') || null,
+      });
+    } catch (healthError) {
+      console.error(
+        '[api/flights/upload-pdf POST] health log failed:',
+        healthError,
+      );
+      return Response.json(
+        { error: 'Import result could not be recorded' },
+        { status: 500 },
+      );
+    }
 
     return Response.json(result, { status: result.success ? 200 : 422 });
   } catch (error) {
     console.error('[api/flights/upload-pdf POST] error:', error);
+    if (attemptedFileName) {
+      try {
+        await recordImportHealthResult({
+          source: 'flight_schedule',
+          fileName: attemptedFileName,
+          success: false,
+          records: 0,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } catch (healthError) {
+        console.error(
+          '[api/flights/upload-pdf POST] failed to record importer error:',
+          healthError,
+        );
+      }
+    }
     return Response.json(
       { success: false, totalFlights: 0, arrivals: 0, departures: 0, error: 'Flight upload failed' },
       { status: 500 }

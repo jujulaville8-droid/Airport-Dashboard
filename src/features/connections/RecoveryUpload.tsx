@@ -32,28 +32,6 @@ function responseMessage(payload: unknown): string | null {
   return null;
 }
 
-function payloadSucceeded(payload: unknown): boolean {
-  if (!payload || typeof payload !== 'object') return true;
-  return (payload as Record<string, unknown>).success !== false;
-}
-
-function recordCount(payload: unknown): number {
-  if (!payload || typeof payload !== 'object') return 0;
-  const record = payload as Record<string, unknown>;
-  for (const key of [
-    'rowsParsed',
-    'totalDays',
-    'totalFlights',
-    'lineItemsWritten',
-  ]) {
-    const value = record[key];
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-      return Math.floor(value);
-    }
-  }
-  return typeof record.date === 'string' ? 1 : 0;
-}
-
 export function RecoveryUpload({
   source,
   onRecovered,
@@ -100,38 +78,10 @@ export function RecoveryUpload({
 
     setState({ kind: 'uploading' });
     try {
-      let response: Response;
-      try {
-        response = await fetch(RECOVERY_ENDPOINTS[source], {
-          method: 'POST',
-          body: formData,
-        });
-      } catch (requestError) {
-        const message =
-          requestError instanceof Error
-            ? requestError.message
-            : 'Recovery importer could not be reached.';
-        try {
-          await fetch('/api/connections/status', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source,
-              status: 'failed',
-              records: 0,
-              message,
-              fileName: file.name,
-            }),
-          });
-        } catch (logError) {
-          console.error(
-            '[connections] failed to record recovery request error:',
-            logError,
-          );
-        }
-        throw requestError;
-      }
-
+      const response = await fetch(RECOVERY_ENDPOINTS[source], {
+        method: 'POST',
+        body: formData,
+      });
       let payload: unknown = null;
       try {
         payload = await response.json();
@@ -139,30 +89,12 @@ export function RecoveryUpload({
         // The status still determines success if an upstream error is not JSON.
       }
 
-      const succeeded = response.ok && payloadSucceeded(payload);
-      const importMessage = succeeded
-        ? null
-        : responseMessage(payload) ??
-          `Recovery import failed (HTTP ${response.status}).`;
-      const healthResponse = await fetch('/api/connections/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source,
-          status: succeeded ? 'success' : 'failed',
-          records: recordCount(payload),
-          message: importMessage,
-          fileName: file.name,
-        }),
-      });
-      if (!healthResponse.ok) {
+      if (!response.ok) {
         throw new Error(
-          succeeded
-            ? 'Recovery import completed, but its health status could not be recorded. Refresh status before trying again.'
-            : `${importMessage} Health status could not be recorded.`,
+          responseMessage(payload) ??
+            `Recovery import failed (HTTP ${response.status}).`,
         );
       }
-      if (!succeeded) throw new Error(importMessage ?? 'Recovery import failed.');
 
       setState({
         kind: 'success',

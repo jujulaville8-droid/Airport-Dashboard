@@ -1,4 +1,5 @@
 import { importInventorySnapshot } from '@/lib/counterpoint-inventory';
+import { recordImportHealthResult } from '@/lib/import-health-log';
 import { NextRequest } from 'next/server';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -16,6 +17,7 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
  *     backfilling a snapshot from a prior date.
  */
 export async function POST(request: NextRequest) {
+  let attemptedFileName: string | null = null;
   try {
     const formData = await request.formData();
     const fileEntry = formData.get('file');
@@ -49,12 +51,47 @@ export async function POST(request: NextRequest) {
       snapshotDate = snapshotDateRaw;
     }
 
+    attemptedFileName = file.name;
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await importInventorySnapshot(buffer, file.name, snapshotDate);
+    try {
+      await recordImportHealthResult({
+        source: 'inventory',
+        fileName: file.name,
+        success: result.success,
+        records: result.rowsParsed,
+        message: result.errors.join('; ') || null,
+      });
+    } catch (healthError) {
+      console.error(
+        '[api/inventory/snapshot] health log failed:',
+        healthError,
+      );
+      return Response.json(
+        { error: 'Import result could not be recorded' },
+        { status: 500 },
+      );
+    }
 
     return Response.json(result, { status: result.success ? 200 : 422 });
   } catch (error) {
     console.error('[api/inventory/snapshot] error:', error);
+    if (attemptedFileName) {
+      try {
+        await recordImportHealthResult({
+          source: 'inventory',
+          fileName: attemptedFileName,
+          success: false,
+          records: 0,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } catch (healthError) {
+        console.error(
+          '[api/inventory/snapshot] failed to record importer error:',
+          healthError,
+        );
+      }
+    }
     return Response.json({ error: 'Inventory snapshot import failed' }, { status: 500 });
   }
 }

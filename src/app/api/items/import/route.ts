@@ -1,4 +1,5 @@
 import { importItemSales } from '@/lib/counterpoint-items';
+import { recordImportHealthResult } from '@/lib/import-health-log';
 import { NextRequest } from 'next/server';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -15,6 +16,7 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
  *     a ticket date column; defaults to today.
  */
 export async function POST(request: NextRequest) {
+  let attemptedFileName: string | null = null;
   try {
     const formData = await request.formData();
     const fileEntry = formData.get('file');
@@ -48,12 +50,44 @@ export async function POST(request: NextRequest) {
       date = dateRaw;
     }
 
+    attemptedFileName = file.name;
     const buffer = Buffer.from(await file.arrayBuffer());
     const result = await importItemSales(buffer, file.name, date);
+    try {
+      await recordImportHealthResult({
+        source: 'item_sales',
+        fileName: file.name,
+        success: result.success,
+        records: result.rowsParsed,
+        message: result.errors.join('; ') || null,
+      });
+    } catch (healthError) {
+      console.error('[api/items/import] health log failed:', healthError);
+      return Response.json(
+        { error: 'Import result could not be recorded' },
+        { status: 500 },
+      );
+    }
 
     return Response.json(result, { status: result.success ? 200 : 422 });
   } catch (error) {
     console.error('[api/items/import] error:', error);
+    if (attemptedFileName) {
+      try {
+        await recordImportHealthResult({
+          source: 'item_sales',
+          fileName: attemptedFileName,
+          success: false,
+          records: 0,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } catch (healthError) {
+        console.error(
+          '[api/items/import] failed to record importer error:',
+          healthError,
+        );
+      }
+    }
     return Response.json({ error: 'Item sales import failed' }, { status: 500 });
   }
 }

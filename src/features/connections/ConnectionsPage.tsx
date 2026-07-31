@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -87,8 +87,10 @@ export function ConnectionsPage({
   );
   const [loading, setLoading] = useState(!initialStatus);
   const [error, setError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
 
   const loadStatus = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setLoading(true);
     setError(null);
     try {
@@ -99,19 +101,27 @@ export function ConnectionsPage({
         throw new Error(`Health request failed (HTTP ${response.status})`);
       }
       const nextStatus = (await response.json()) as ConnectionsStatusResponse;
-      setStatus(nextStatus);
+      if (generation === requestGeneration.current) {
+        setStatus(nextStatus);
+      }
     } catch (requestError) {
+      if (generation !== requestGeneration.current) return;
       console.error('[connections] status request failed:', requestError);
       setError(
         'Automatic import status could not be refreshed. Retry to load the latest state.',
       );
     } finally {
-      setLoading(false);
+      if (generation === requestGeneration.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (!initialStatus) void loadStatus();
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [initialStatus, loadStatus]);
 
   const recentImports = useMemo(

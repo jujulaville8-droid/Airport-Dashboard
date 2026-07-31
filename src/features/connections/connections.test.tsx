@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -41,11 +42,11 @@ vi.mock('@/lib/gmail-inbox', () => ({
   scanInbox: mocks.scanInbox,
 }));
 
-import {
-  GET as getConnectionsStatus,
-  POST as recordRecoveryImport,
-} from '@/app/api/connections/status/route';
+import * as connectionsStatusRoute from '@/app/api/connections/status/route';
 import { GET as runInboxCron } from '@/app/api/cron/inbox/route';
+import { proxy } from '@/proxy';
+
+const getConnectionsStatus = connectionsStatusRoute.GET;
 
 afterEach(cleanup);
 
@@ -106,6 +107,16 @@ const statusFixture: ConnectionsStatusResponse = {
     },
   ],
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
 
 describe('GET /api/connections/status', () => {
   beforeEach(() => {
@@ -210,30 +221,19 @@ describe('GET /api/connections/status', () => {
     expect(JSON.stringify(body)).not.toContain('cron-secret-value');
   });
 
-  it('records a normalized recovery result for the source health timeline', async () => {
-    const response = await recordRecoveryImport(
-      new Request('http://localhost/api/connections/status', {
+  it('does not expose a browser-callable result attestation method', () => {
+    expect(connectionsStatusRoute).not.toHaveProperty('POST');
+  });
+
+  it('keeps the status boundary behind the production session proxy', async () => {
+    const response = await proxy(
+      new NextRequest('http://localhost/api/connections/status', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          source: 'inventory',
-          status: 'success',
-          records: 18,
-          message: null,
-          fileName: 'inventory.xlsx',
-        }),
       }),
     );
 
-    expect(response.status).toBe(200);
-    expect(mocks.logImport).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: 'inventory',
-        status: 'success',
-        successful_records: 18,
-        attempted_at: expect.any(String),
-      }),
-    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
   });
 });
 
@@ -358,6 +358,109 @@ describe('Data Connections', () => {
 
     expect(screen.getByText('Configuration required')).toHaveClass('text-ink');
   });
+
+  it('ignores an older response that resolves after a post-recovery refresh', async () => {
+    const originalFetch = global.fetch;
+    const oldRequest = deferred<Response>();
+    const healthyStatus: ConnectionsStatusResponse = {
+      ...statusFixture,
+      overall: 'healthy',
+      sources: statusFixture.sources.map((source) => ({
+        ...source,
+        status: 'healthy',
+        lastAttemptAt: '2026-07-30T20:10:00.000Z',
+        lastSuccessAt: '2026-07-30T20:10:00.000Z',
+        message: null,
+      })),
+    };
+    const supersededStatus: ConnectionsStatusResponse = {
+      ...statusFixture,
+      sources: statusFixture.sources.map((source) => ({
+        ...source,
+        status: 'never',
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        message: null,
+      })),
+    };
+    let statusReads = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === '/api/connections/status') {
+          if (init?.method === 'POST') {
+            return Response.json({ ok: true }, { status: 200 });
+          }
+          statusReads += 1;
+          return statusReads === 1
+            ? oldRequest.promise
+            : Response.json(healthyStatus, { status: 200 });
+        }
+        if (url === '/api/items/import') {
+          return Response.json(
+            {
+              success: true,
+              batchId: 'items-batch',
+              rowsParsed: 24,
+              uniqueSkus: 12,
+              ticketsWritten: 5,
+              lineItemsWritten: 24,
+              errors: [],
+              fileHash: 'items-hash',
+            },
+            { status: 200 },
+          );
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      },
+    );
+    global.fetch = fetchMock as typeof fetch;
+    const user = userEvent.setup();
+
+    try {
+      render(<ConnectionsPage initialStatus={statusFixture} />);
+      await user.click(screen.getByRole('button', { name: 'Refresh status' }));
+
+      const itemCard = screen.getByRole('article', { name: 'Item sales' });
+      await user.click(
+        within(itemCard).getByRole('button', { name: 'Open recovery' }),
+      );
+      await user.upload(
+        within(itemCard).getByLabelText('Recovery file'),
+        new File(['report'], 'items.xlsx'),
+      );
+      await user.click(
+        within(itemCard).getByRole('button', {
+          name: 'Upload recovery file',
+        }),
+      );
+
+      expect(
+        await screen.findByText('5 of 5 sources current'),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Refresh status' }),
+      ).toBeEnabled();
+
+      await act(async () => {
+        oldRequest.resolve(
+          Response.json(supersededStatus, { status: 200 }),
+        );
+        await oldRequest.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(
+        screen.getByText('5 of 5 sources current'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('0 of 5 sources current')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Refresh status' }),
+      ).toBeEnabled();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
 
 describe('recovery uploads', () => {
@@ -401,6 +504,7 @@ describe('recovery uploads', () => {
         endpoint,
         expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
       );
+      expect(global.fetch).toHaveBeenCalledOnce();
 
       const request = vi.mocked(global.fetch).mock.calls[0][1];
       const body = request?.body as FormData;
@@ -412,16 +516,22 @@ describe('recovery uploads', () => {
     },
   );
 
-  it('records a successful recovery before refreshing source health', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json(
-          { success: true, rowsParsed: 24 },
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(Response.json({ ok: true }, { status: 200 }));
+  it('trusts the authoritative endpoint response without posting client-derived health', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          success: true,
+          batchId: 'items-batch',
+          rowsParsed: 24,
+          uniqueSkus: 12,
+          ticketsWritten: 5,
+          lineItemsWritten: 24,
+          errors: [],
+          fileHash: 'items-hash',
+        },
+        { status: 200 },
+      ),
+    );
     global.fetch = fetchMock;
     const user = userEvent.setup();
     render(<RecoveryUpload source="item_sales" />);
@@ -434,21 +544,51 @@ describe('recovery uploads', () => {
       screen.getByRole('button', { name: 'Upload recovery file' }),
     );
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/connections/status',
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/items/import',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source: 'item_sales',
-          status: 'success',
-          records: 24,
-          message: null,
-          fileName: 'items.xlsx',
-        }),
+        body: expect.any(FormData),
       }),
     );
+    expect(
+      screen.getByText('item sales recovery import completed.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows an authoritative malformed-import failure without posting health', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          success: false,
+          batchId: 'inventory-batch',
+          snapshotDate: '2026-07-30',
+          rowsParsed: 17,
+          uniqueSkus: 17,
+          totalValue: 0,
+          errors: ['inventory_snapshots insert failed'],
+          fileHash: 'inventory-hash',
+        },
+        { status: 422 },
+      ),
+    );
+    global.fetch = fetchMock;
+    const user = userEvent.setup();
+    render(<RecoveryUpload source="inventory" />);
+
+    await user.upload(
+      screen.getByLabelText('Recovery file'),
+      new File(['report'], 'inventory.xlsx'),
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Upload recovery file' }),
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'inventory_snapshots insert failed',
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('uses accessible ink text for small recovery errors', async () => {

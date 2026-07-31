@@ -1,4 +1,4 @@
-import { logImport, supabase } from '@/lib/db';
+import { supabase } from '@/lib/db';
 import {
   IMPORT_SOURCES,
   summarizeImportHealth,
@@ -21,22 +21,6 @@ function isImportSource(source: string | null): source is ImportSource {
 
 function configured(value: string | undefined): boolean {
   return Boolean(value?.trim());
-}
-
-const RECOVERY_SOURCES = [
-  'sales',
-  'item_sales',
-  'inventory',
-  'flight_schedule',
-] as const;
-
-type RecoverySource = (typeof RECOVERY_SOURCES)[number];
-
-function isRecoverySource(source: unknown): source is RecoverySource {
-  return (
-    typeof source === 'string' &&
-    (RECOVERY_SOURCES as readonly string[]).includes(source)
-  );
 }
 
 export async function GET() {
@@ -124,71 +108,6 @@ export async function GET() {
     console.error('[api/connections/status] query failed:', error);
     return Response.json(
       { error: 'Connections status unavailable' },
-      { status: 500 },
-    );
-  }
-}
-
-export async function POST(request: Request) {
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return Response.json({ error: 'Invalid recovery result' }, { status: 400 });
-  }
-
-  if (!payload || typeof payload !== 'object') {
-    return Response.json({ error: 'Invalid recovery result' }, { status: 400 });
-  }
-
-  const result = payload as Record<string, unknown>;
-  const source = result.source;
-  const status = result.status;
-  const records = result.records;
-  const message = result.message;
-  const fileName = result.fileName;
-
-  if (
-    !isRecoverySource(source) ||
-    (status !== 'success' && status !== 'failed') ||
-    typeof records !== 'number' ||
-    !Number.isFinite(records) ||
-    records < 0 ||
-    !Number.isInteger(records) ||
-    (message !== null && typeof message !== 'string') ||
-    (typeof message === 'string' && message.length > 2_000) ||
-    typeof fileName !== 'string' ||
-    fileName.length < 1 ||
-    fileName.length > 255
-  ) {
-    return Response.json({ error: 'Invalid recovery result' }, { status: 400 });
-  }
-
-  const sourceType =
-    source === 'flight_schedule' ? 'flight_schedule' : 'counterpoint';
-
-  try {
-    await logImport({
-      source_type: sourceType,
-      file_name: fileName,
-      total_records: records,
-      successful_records: status === 'success' ? records : 0,
-      failed_records: status === 'failed' ? records : 0,
-      error_messages:
-        status === 'failed'
-          ? { errors: [message ?? 'Recovery import failed'] }
-          : null,
-      reconciliation_status: status === 'success' ? 'complete' : 'failed',
-      source,
-      status,
-      message,
-      attempted_at: new Date().toISOString(),
-    });
-    return Response.json({ ok: true });
-  } catch (error) {
-    console.error('[api/connections/status] recovery log failed:', error);
-    return Response.json(
-      { error: 'Recovery status unavailable' },
       { status: 500 },
     );
   }
