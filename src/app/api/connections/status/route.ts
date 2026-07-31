@@ -87,7 +87,10 @@ export async function GET() {
       process.env.GMAIL_CLIENT_SECRET,
       process.env.GMAIL_REFRESH_TOKEN,
     ].every(configured);
-    const flightProviderConfigured = configured(process.env.AERODATABOX_RAPIDAPI_KEY);
+    const flightProviderConfigured = [
+      process.env.AERODATABOX_RAPIDAPI_KEY,
+      process.env.FLIGHT_CRON_SECRET,
+    ].every(configured);
     const overall = !cronConfigured || !gmailConfigured || !flightProviderConfigured
       ? 'not-configured'
       : sources.every((source) => source.status === 'healthy')

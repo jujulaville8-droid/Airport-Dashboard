@@ -6,15 +6,18 @@ The dashboard imports V.C. Bird International Airport (`ANU`) departures from Ae
 
 1. Apply every SQL file in `supabase/migrations` in numeric order. Migration `006_aerodatabox_sync.sql` creates the synchronization lease table and its service-role-only claim function.
 2. In the Render web service, add `AERODATABOX_RAPIDAPI_KEY` as a secret environment variable using the RapidAPI application key.
-3. Confirm the existing Supabase and authentication variables from `.env.example` are also present.
-4. Deploy the current `main` branch. The standard Render commands are `npm ci && npm run build` and `npm start`.
-5. Sign in, open **Flights**, and select today. This triggers the first live refresh.
-6. Open **Schedules** and generate a schedule covering the upcoming dates. This triggers the first planning refresh before demand is read.
-7. Open **Data Connections**. The flight provider should show **Connected**, and flight schedule import history should show the AeroDataBox result.
+3. Generate one random `FLIGHT_CRON_SECRET`, add the same value to the Render web service and the GitHub repository Actions secret named `FLIGHT_CRON_SECRET`, and never commit it. Keep this separate from the Gmail inbox `CRON_SECRET`.
+4. Confirm the existing Supabase and authentication variables from `.env.example` are also present.
+5. Deploy the current `main` branch. The standard Render commands are `npm ci && npm run build` and `npm start`.
+6. Run the **Refresh ANU departures** GitHub Actions workflow once using **Run workflow**. It calls the protected Render endpoint and verifies the shared secret.
+7. Sign in, open **Flights**, and select today. A page visit fills the current workday refresh slot if the scheduled run was delayed.
+8. Open **Schedules** and generate a schedule covering the upcoming dates. This triggers the first planning refresh before demand is read.
+9. Open **Data Connections**. The flight provider should show **Connected**, and flight schedule import history should show the AeroDataBox result.
 
 ## Quota behavior
 
-- Live data is considered fresh for six hours.
+- Live data refreshes at most once in each Antigua workday slot: 9 AM, 1 PM, 5 PM, and 9 PM. Overnight page visits use stored data.
+- `.github/workflows/flight-refresh.yml` invokes the protected background endpoint at those four local times. GitHub schedules use UTC; Antigua remains UTC-4 year-round.
 - The upcoming 14-day planning window is considered fresh for seven days.
 - A 15-minute database lease prevents duplicate requests across concurrent Render instances, including worst-case provider timeouts.
 - Failed attempts enter a 15-minute retry cooldown so reloads cannot burn quota during an outage.

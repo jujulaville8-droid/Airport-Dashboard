@@ -231,6 +231,9 @@ export function ConnectionsPage({
             <li className="rounded border border-line bg-app-bg px-3 py-2">
               AERODATABOX_RAPIDAPI_KEY
             </li>
+            <li className="rounded border border-line bg-app-bg px-3 py-2">
+              FLIGHT_CRON_SECRET
+            </li>
           </ul>
         </section>
       ) : null}
@@ -287,7 +290,7 @@ export function ConnectionsPage({
       </section>
 
       <Panel
-        description="ANU departures refresh automatically for the live board and the next 14 planning days."
+        description="ANU departures refresh at 9 AM, 1 PM, 5 PM, and 9 PM Antigua time, with a separate quota-safe planning feed."
         title="Flight data provider"
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

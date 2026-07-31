@@ -67,16 +67,16 @@ function makeDependencies(options?: {
 }
 
 describe('ensureDepartureDataFresh', () => {
-  it('uses a successful live sync for six hours without consuming provider quota', async () => {
+  it('uses a successful live sync for the rest of its four-hour workday slot', async () => {
     const { dependencies } = makeDependencies({
-      lastSuccessAt: '2026-08-03T08:00:00.000Z',
+      lastSuccessAt: '2026-08-03T13:05:00.000Z',
     });
 
     const result = await ensureDepartureDataFresh(
       {
         mode: 'live',
         startDate: '2026-08-03',
-        now: new Date('2026-08-03T12:00:00.000Z'),
+        now: new Date('2026-08-03T16:59:00.000Z'),
       },
       dependencies,
     );
@@ -84,9 +84,72 @@ describe('ensureDepartureDataFresh', () => {
     expect(result).toEqual({
       status: 'fresh',
       records: 0,
-      lastSuccessAt: '2026-08-03T08:00:00.000Z',
+      lastSuccessAt: '2026-08-03T13:05:00.000Z',
       message: null,
     });
+    expect(dependencies.fetchWindow).not.toHaveBeenCalled();
+  });
+
+  it('refreshes when the next Antigua workday slot begins', async () => {
+    const { dependencies } = makeDependencies({
+      lastSuccessAt: '2026-08-03T13:05:00.000Z',
+    });
+
+    const result = await ensureDepartureDataFresh(
+      {
+        mode: 'live',
+        startDate: '2026-08-03',
+        now: new Date('2026-08-03T17:00:00.000Z'),
+      },
+      dependencies,
+    );
+
+    expect(result.status).toBe('updated');
+    expect(dependencies.fetchWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('credits a refresh to the slot in which persistence completes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-03T16:59:59.000Z'));
+    const { dependencies } = makeDependencies();
+    dependencies.upsert = vi.fn(async () => {
+      vi.setSystemTime(new Date('2026-08-03T17:00:01.000Z'));
+    });
+
+    try {
+      const result = await ensureDepartureDataFresh(
+        {
+          mode: 'live',
+          startDate: '2026-08-03',
+          now: new Date('2026-08-03T16:59:59.000Z'),
+        },
+        dependencies,
+      );
+
+      expect(result.lastSuccessAt).toBe('2026-08-03T17:00:01.000Z');
+      expect(dependencies.complete).toHaveBeenCalledWith(
+        'aerodatabox:live:2026-08-03:2026-08-03',
+        new Date('2026-08-03T17:00:01.000Z'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serves stored live data before the 9 AM Antigua workday starts', async () => {
+    const { dependencies } = makeDependencies();
+
+    const result = await ensureDepartureDataFresh(
+      {
+        mode: 'live',
+        startDate: '2026-08-03',
+        now: new Date('2026-08-03T12:59:00.000Z'),
+      },
+      dependencies,
+    );
+
+    expect(result.status).toBe('fresh');
+    expect(dependencies.claim).not.toHaveBeenCalled();
     expect(dependencies.fetchWindow).not.toHaveBeenCalled();
   });
 
@@ -102,6 +165,39 @@ describe('ensureDepartureDataFresh', () => {
 
     expect(result.status).toBe('in-progress');
     expect(dependencies.fetchWindow).not.toHaveBeenCalled();
+  });
+
+  it('rechecks slot freshness after claiming a lease delayed behind another refresh', async () => {
+    const { dependencies } = makeDependencies();
+    vi.mocked(dependencies.getState)
+      .mockResolvedValueOnce({
+        lastSuccessAt: null,
+        lastAttemptAt: null,
+        leaseUntil: null,
+      })
+      .mockResolvedValueOnce({
+        lastSuccessAt: '2026-08-03T13:00:00.000Z',
+        lastAttemptAt: '2026-08-03T13:00:00.000Z',
+        leaseUntil: null,
+      });
+
+    const result = await ensureDepartureDataFresh(
+      {
+        mode: 'live',
+        startDate: '2026-08-03',
+        now: new Date('2026-08-03T13:05:00.000Z'),
+      },
+      dependencies,
+    );
+
+    expect(result).toEqual({
+      status: 'fresh',
+      records: 0,
+      lastSuccessAt: '2026-08-03T13:00:00.000Z',
+      message: null,
+    });
+    expect(dependencies.fetchWindow).not.toHaveBeenCalled();
+    expect(dependencies.release).toHaveBeenCalledTimes(1);
   });
 
   it('keys planning freshness to the exact requested coverage', async () => {
@@ -132,10 +228,10 @@ describe('ensureDepartureDataFresh', () => {
       'aerodatabox:planning:2026-08-03:2026-08-09',
     );
     expect(dependencies.getState).toHaveBeenNthCalledWith(
-      2,
+      3,
       'aerodatabox:planning:2026-08-10:2026-08-16',
     );
-    expect(dependencies.getState).toHaveBeenCalledTimes(2);
+    expect(dependencies.getState).toHaveBeenCalledTimes(4);
   });
 
   it('backs off after a recent failed attempt without consuming provider quota', async () => {

@@ -49,7 +49,7 @@ export type FlightSyncDependencies = {
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const LIVE_FRESH_MS = 6 * 60 * 60 * 1000;
+const LIVE_REFRESH_HOURS = [9, 13, 17, 21] as const;
 const PLANNING_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const LEASE_SECONDS = 15 * 60;
 const RETRY_COOLDOWN_MS = 15 * 60 * 1000;
@@ -114,6 +114,28 @@ function isFresh(lastSuccessAt: string | null, now: Date, maxAgeMs: number): boo
   if (!lastSuccessAt) return false;
   const timestamp = new Date(lastSuccessAt).getTime();
   return Number.isFinite(timestamp) && now.getTime() - timestamp < maxAgeMs;
+}
+
+function isLiveRefreshSlotFresh(
+  lastSuccessAt: string | null,
+  now: Date,
+): boolean {
+  const current = getAntiguaParts(now);
+  const slotStart = [...LIVE_REFRESH_HOURS]
+    .reverse()
+    .find((hour) => hour <= current.hour);
+
+  if (slotStart === undefined) return true;
+  if (!lastSuccessAt) return false;
+
+  const lastSuccess = new Date(lastSuccessAt);
+  if (Number.isNaN(lastSuccess.getTime())) return false;
+  const previous = getAntiguaParts(lastSuccess);
+  const sameLocalDate =
+    previous.year === current.year &&
+    previous.month === current.month &&
+    previous.day === current.day;
+  return sameLocalDate && previous.hour >= slotStart;
 }
 
 function flightKey(flight: Pick<ExistingFlight, 'flight_num' | 'flight_date' | 'flight_type'>): string {
@@ -251,8 +273,10 @@ export async function ensureDepartureDataFresh(
   const endDate = datePlusDays(request.startDate, days - 1);
   const syncKey = `aerodatabox:${request.mode}:${request.startDate}:${endDate}`;
   const state = await deps.getState(syncKey);
-  const freshness = request.mode === 'live' ? LIVE_FRESH_MS : PLANNING_FRESH_MS;
-  if (isFresh(state.lastSuccessAt, now, freshness)) {
+  const fresh = request.mode === 'live'
+    ? isLiveRefreshSlotFresh(state.lastSuccessAt, now)
+    : isFresh(state.lastSuccessAt, now, PLANNING_FRESH_MS);
+  if (fresh) {
     return {
       status: 'fresh',
       records: 0,
@@ -294,6 +318,26 @@ export async function ensureDepartureDataFresh(
     };
   }
 
+  let stateAfterClaim: Awaited<ReturnType<FlightSyncDependencies['getState']>>;
+  try {
+    stateAfterClaim = await deps.getState(syncKey);
+  } catch (error) {
+    await deps.release(syncKey);
+    throw error;
+  }
+  const becameFresh = request.mode === 'live'
+    ? isLiveRefreshSlotFresh(stateAfterClaim.lastSuccessAt, now)
+    : isFresh(stateAfterClaim.lastSuccessAt, now, PLANNING_FRESH_MS);
+  if (becameFresh) {
+    await deps.release(syncKey);
+    return {
+      status: 'fresh',
+      records: 0,
+      lastSuccessAt: stateAfterClaim.lastSuccessAt,
+      message: null,
+    };
+  }
+
   const windows = request.mode === 'live'
     ? [buildLiveWindow(request.startDate, now)]
     : buildDepartureWindows(request.startDate, days);
@@ -318,11 +362,12 @@ export async function ensureDepartureDataFresh(
       records: persistedRecords,
       message: `AeroDataBox ${request.mode} departures refreshed.`,
     });
-    await deps.complete(syncKey, now);
+    const completedAt = new Date();
+    await deps.complete(syncKey, completedAt);
     return {
       status: 'updated',
       records: persistedRecords,
-      lastSuccessAt: now.toISOString(),
+      lastSuccessAt: completedAt.toISOString(),
       message: null,
     };
   } catch {

@@ -182,6 +182,7 @@ describe('GET /api/connections/status', () => {
     process.env.GMAIL_CLIENT_SECRET = 'gmail-client-secret-value';
     process.env.GMAIL_REFRESH_TOKEN = 'GMAIL_REFRESH_TOKEN';
     process.env.AERODATABOX_RAPIDAPI_KEY = 'rapid-key-value';
+    process.env.FLIGHT_CRON_SECRET = 'flight-cron-secret-value';
   });
 
   afterEach(() => {
@@ -191,6 +192,7 @@ describe('GET /api/connections/status', () => {
     delete process.env.GMAIL_CLIENT_SECRET;
     delete process.env.GMAIL_REFRESH_TOKEN;
     delete process.env.AERODATABOX_RAPIDAPI_KEY;
+    delete process.env.FLIGHT_CRON_SECRET;
   });
 
   it('returns the five artifact sources in operational order without exposing configuration secrets', async () => {
@@ -234,6 +236,17 @@ describe('GET /api/connections/status', () => {
     expect(JSON.stringify(body)).not.toContain('gmail-client-id-value');
     expect(JSON.stringify(body)).not.toContain('cron-secret-value');
     expect(JSON.stringify(body)).not.toContain('rapid-key-value');
+  });
+
+  it('reports flight automation as unconfigured when its dedicated cron secret is missing', async () => {
+    delete process.env.FLIGHT_CRON_SECRET;
+
+    const response = await getConnectionsStatus();
+    const body = await response.json();
+
+    expect(body.overall).toBe('not-configured');
+    expect(body.flightProvider.configured).toBe(false);
+    expect(JSON.stringify(body)).not.toContain('flight-cron-secret-value');
   });
 
   it('does not expose a browser-callable result attestation method', () => {
