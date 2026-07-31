@@ -208,10 +208,10 @@ export function ConnectionsPage({
             className="mt-2 font-display text-2xl font-semibold text-ink"
             id="connections-configuration-title"
           >
-            Complete the automatic inbox setup
+            Complete the automatic data setup
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-            Set the cron secret and Gmail OAuth variables in the deployment
+            Set the AeroDataBox, cron, and Gmail OAuth variables in the deployment
             environment, then redeploy. This page reports configuration only
             as ready or not ready; credential values are never returned.
           </p>
@@ -227,6 +227,9 @@ export function ConnectionsPage({
             </li>
             <li className="rounded border border-line bg-app-bg px-3 py-2">
               GMAIL_REFRESH_TOKEN
+            </li>
+            <li className="rounded border border-line bg-app-bg px-3 py-2">
+              AERODATABOX_RAPIDAPI_KEY
             </li>
           </ul>
         </section>
@@ -282,6 +285,21 @@ export function ConnectionsPage({
           </div>
         </div>
       </section>
+
+      <Panel
+        description="ANU departures refresh automatically for the live board and the next 14 planning days."
+        title="Flight data provider"
+      >
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-semibold text-ink">AeroDataBox · ANU departures</p>
+            <p className="mt-1 text-sm text-muted">Quota-safe refreshes preserve passenger counts and existing schedule data.</p>
+          </div>
+          <Badge tone={status.flightProvider.configured ? 'positive' : 'danger'}>
+            {status.flightProvider.configured ? 'Connected' : 'Setup required'}
+          </Badge>
+        </div>
+      </Panel>
 
       <Panel
         description="Connected sources require no action. Open recovery only for stale, failed, or missing imports."

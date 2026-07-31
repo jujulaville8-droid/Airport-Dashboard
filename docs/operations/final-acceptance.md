@@ -5,7 +5,11 @@
 - Sales, inventory, flights, and schedules are monitored through **Data Connections**.
 - Routine manager workflows do not require uploads. Recover failed reports from Data Connections, then review the destination workspace.
 - Sales reports are paginated server-side; late/missing reports are labelled instead of represented as zero revenue.
-- Flight PDFs remain source evidence. Capacity emails populate actual passenger counts when matched.
+- AeroDataBox supplies ANU departures automatically; legacy flight PDFs remain source evidence. Capacity emails populate actual passenger counts when matched.
+
+## AeroDataBox deployment
+
+Follow [Render departure setup](./render-deployment.md) before accepting the Flights and Schedules workflows.
 
 ## Local preview
 

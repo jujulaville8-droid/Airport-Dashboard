@@ -53,6 +53,12 @@ afterEach(cleanup);
 const statusFixture: ConnectionsStatusResponse = {
   overall: 'attention',
   cron: { configured: true, schedule: 'hourly' },
+  flightProvider: {
+    provider: 'AeroDataBox',
+    configured: true,
+    airport: 'ANU',
+    direction: 'departure',
+  },
   sources: [
     {
       source: 'sales',
@@ -175,6 +181,7 @@ describe('GET /api/connections/status', () => {
     process.env.GMAIL_CLIENT_ID = 'gmail-client-id-value';
     process.env.GMAIL_CLIENT_SECRET = 'gmail-client-secret-value';
     process.env.GMAIL_REFRESH_TOKEN = 'GMAIL_REFRESH_TOKEN';
+    process.env.AERODATABOX_RAPIDAPI_KEY = 'rapid-key-value';
   });
 
   afterEach(() => {
@@ -183,6 +190,7 @@ describe('GET /api/connections/status', () => {
     delete process.env.GMAIL_CLIENT_ID;
     delete process.env.GMAIL_CLIENT_SECRET;
     delete process.env.GMAIL_REFRESH_TOKEN;
+    delete process.env.AERODATABOX_RAPIDAPI_KEY;
   });
 
   it('returns the five artifact sources in operational order without exposing configuration secrets', async () => {
@@ -202,6 +210,12 @@ describe('GET /api/connections/status', () => {
     expect(body).toMatchObject({
       overall: 'attention',
       cron: { configured: true, schedule: 'hourly' },
+      flightProvider: {
+        provider: 'AeroDataBox',
+        configured: true,
+        airport: 'ANU',
+        direction: 'departure',
+      },
     });
     expect(mocks.query.order).toHaveBeenCalledWith('attempted_at', {
       ascending: false,
@@ -219,6 +233,7 @@ describe('GET /api/connections/status', () => {
     expect(body.cron).toEqual({ configured: true, schedule: 'hourly' });
     expect(JSON.stringify(body)).not.toContain('gmail-client-id-value');
     expect(JSON.stringify(body)).not.toContain('cron-secret-value');
+    expect(JSON.stringify(body)).not.toContain('rapid-key-value');
   });
 
   it('does not expose a browser-callable result attestation method', () => {
