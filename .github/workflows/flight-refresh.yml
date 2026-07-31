@@ -1,0 +1,24 @@
+name: Refresh ANU departures
+
+on:
+  schedule:
+    # GitHub cron uses UTC. Antigua is UTC-4 year-round, so these are
+    # 9 AM, 1 PM, 5 PM, and 9 PM in Antigua.
+    - cron: '0 1,13,17,21 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Refresh live departures
+        env:
+          FLIGHT_CRON_SECRET: ${{ secrets.FLIGHT_CRON_SECRET }}
+        run: |
+          test -n "$FLIGHT_CRON_SECRET"
+          curl --fail-with-body --silent --show-error --max-time 90 \
+            -H "Authorization: Bearer $FLIGHT_CRON_SECRET" \
+            https://airport-dashboard-x7ke.onrender.com/api/cron/flights
