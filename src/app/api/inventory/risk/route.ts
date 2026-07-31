@@ -17,7 +17,12 @@ export async function GET(request: Request) {
     }
 
     const result = await computeRiskSummary(velocityWindow);
-    return Response.json(result);
+    return Response.json({
+      ...result,
+      snapshotDate: result.summary.snapshotDate,
+      salesWindow: velocityWindow,
+      updatedAt: result.summary.snapshotDate,
+    });
   } catch (error) {
     console.error('[api/inventory/risk] error:', error);
     return Response.json({ error: 'Failed to compute inventory risk' }, { status: 500 });

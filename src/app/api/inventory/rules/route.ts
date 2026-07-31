@@ -71,6 +71,16 @@ export async function PUT(request: NextRequest) {
       return Response.json({ error: parsed.error }, { status: 400 });
     }
     const updates = parsed.value;
+    if (!['min_stock', 'reorder_point', 'max_stock', 'lead_time_days'].every((field) => field in updates && updates[field as keyof typeof updates] !== null)) {
+      return Response.json({ error: 'All reorder rule bounds are required' }, { status: 400 });
+    }
+    const minStock = Number(updates.min_stock);
+    const reorderPoint = Number(updates.reorder_point);
+    const maxStock = Number(updates.max_stock);
+    const leadTimeDays = Number(updates.lead_time_days);
+    if (![minStock, reorderPoint, maxStock, leadTimeDays].every(Number.isFinite) || minStock < 0 || reorderPoint < minStock || maxStock < reorderPoint || leadTimeDays < 0) {
+      return Response.json({ error: 'Invalid reorder rule bounds' }, { status: 400 });
+    }
 
     // Confirm the item exists in item_master (FK would catch it but we prefer a clean 404)
     const { data: master, error: masterErr } = await supabase
